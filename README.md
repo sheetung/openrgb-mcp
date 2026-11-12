@@ -2,9 +2,7 @@
 
 ![OpenRGB 状态灯](docs/banner.png)
 
-把 AI 会话状态（思考 / 执行 / 进度 / 完成 / 出错 / 等待）实时同步到 OpenRGB 控制的机箱灯带，并用**灯珠数量本身**当进度条、剩余额度条。
-
-基于**官方 MCP Python SDK**（`mcp>=2.0`）实现：标准 tools / resources / prompt 能力、每个工具都有 `inputSchema` + `outputSchema` 与结构化输出，支持 `stdio` 与 `streamable-http` 两种传输。
+把 AI 的会话状态（思考 / 执行 / 进度 / 完成 / 出错）实时同步到 OpenRGB 控制的机箱灯光（风扇、灯条、灯带均可）。
 
 ## 兼容性
 
@@ -14,7 +12,7 @@
 | 协议 | OpenRGB SDK 网络协议，客户端按 v4 布局协商（服务端 v5 亦可） |
 | 端口 | 自动发现：`OPENRGB_PORT` 环境变量 → OpenRGB 日志记录的端口 → 默认 6742 |
 | 设备 | 任意 OpenRGB 设备；灯珠数量、分区在运行时读取 |
-| 写入方式 | 需要设备处于逐灯珠控色模式（如 `Direct`）；不支持时工具会明确报错 |
+| 写入方式 | 优先用控制器自带效果（颜色/亮度/速度由硬件执行，不闪）；设备不支持时回退到逐灯珠写入 |
 | Python | ≥ 3.10，唯一运行时依赖是官方 `mcp` SDK |
 
 ## 安装
@@ -82,7 +80,7 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 | `set_state` | `state`：`idle` `thinking` `working` `waiting` `done` `error` `off`；`detail` 可选说明；`animate` 可选 | 切状态（颜色 + 动画见下表） |
 | `set_progress` | `percent` 0–100，或 `done`+`total`；`color`、`state`、`detail` 可选 | 进度 = 整体亮度（也可在 per_led 模式下点亮前 N 颗） |
 | `set_quota` | `remaining`、`total`；`detail` 可选 | 剩余额度 = 整体亮度，颜色随剩余比例变（>50% 绿、20–50% 琥珀、≤20% 红） |
-| `set_color` | `color` `#RRGGBB`；`brightness` 0–1 可选 | 整条灯带单色 |
+| `set_color` | `color` `#RRGGBB`；`brightness` 0–1 可选 | 整组灯光单色 |
 | `set_leds` | `colors`：`#RRGGBB` 数组，长度必须 = 设备灯珠总数 N | 逐灯珠自定义（仅 `control: per_led` 可用） |
 | `set_effect` | `effect`：设备自带的模式名（如 `Static`、`Breathing`、`Wave` 等，以 `list_devices` 返回为准）；`color` 可选 | 调 OpenRGB 硬件模式（会停掉状态动画） |
 | `restore` | — | 恢复首次接管前的原始灯效，停止动画 |
@@ -103,7 +101,8 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 ## 控制方式：整体控制（默认）
 
-灯接的是**机箱散热风扇**（ARGB 排针），灯珠位置无法对应到具体风扇，所以默认按**整条灯带一个颜色**控制：
+灯光可能是风扇、灯条或灯带。当灯珠无法对应到具体位置时（例如 ARGB 排针上接的是一串散热风扇），
+默认按**整组灯光一个颜色**控制：
 
 | 语义 | 实现 |
 |---|---|
@@ -114,7 +113,7 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 颜色、亮度、速度全部交给控制器执行，**不逐帧重写灯珠**，所以不会闪、也不会有 USB 写入抖动。
 若你的设备确实是可寻址灯带（每颗灯珠可控），把 `config.json` 里的 `control` 改成 `per_led`，
-进度/额度就会变成经典的"点亮前 N 颗"灯带。
+进度/额度就会变成经典的"点亮前 N 颗"效果。
 
 ```json
 {
@@ -240,7 +239,7 @@ openrgb-mcp --self-test                     # 快速探测真实设备
 - 自动同步依赖工作区指令（如 `AGENTS.md`），模型偶尔可能漏调；可显式要求「把状态同步到灯上」。
 - 端口发现依赖 OpenRGB 日志；日志被清空时回落到默认端口 6742，可用 `OPENRGB_PORT` 指定。
 - 每次工具调用都会重连一次 OpenRGB（毫秒级），无长期占用。
-- 默认是**整体控制**（整条灯带一个颜色 + 亮度）；逐灯珠控制只在可寻址灯带上可用，
+- 默认是**整体控制**（整组灯光一个颜色 + 亮度）；逐灯珠控制只在可寻址设备上可用，
   且需要把 `config.json` 的 `control` 改成 `per_led`。
 - 同一时间只让一个程序控制灯光：厂商灯控软件和多个 MCP 进程会互相覆盖。
 
