@@ -101,6 +101,30 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 `status-lamp` —— 说明如何把对话状态映射到灯光，供客户端一键载入。
 
+## 网页测试台（`tools/ui.py`）
+
+想在浏览器里点点看：
+
+```bash
+cd openrgb-mcp
+.venv/Scripts/python.exe tools/ui.py          # 会自动打开浏览器
+.venv/Scripts/python.exe tools/ui.py --port 9000 --no-browser
+```
+
+页面提供：
+
+- **灯带预览** —— 按真实渲染器画出 200 颗灯珠（两行各 100，对应两个分区），
+  状态色 / 进度条 / 额度条与实机一致；标注「硬件效果」时表示灯光由控制器自己驱动。
+- **实时状态栏** —— 设备、LED 数、端口、当前状态、硬件模式、渲染路径。
+- **控制面板** —— 7 个状态按钮、进度滑块、额度输入、单色/渐变、设备自带效果、恢复/关灯。
+- **亮度缓升缓降** —— 6 秒正弦渐变（走 MCP 的 `set_leds`），用来肉眼判断硬件渐变是否平滑。
+- **平滑度 Δ** —— 显示相邻两帧之间的最大亮度跳变（硬闪会接近 255）。
+
+所有操作都通过**官方 MCP 客户端**转发给 MCP server，与 DSH/Claude Desktop 同一条链路。
+
+> 注意：页面自己会拉起一个独立的 MCP server 进程，不要在 AI 正在操作灯的同时用它，
+> 两边会互相覆盖状态。
+
 ## 手动控制 CLI（`tools/lamp.py`）
 
 不想等 AI，自己手动玩灯：
@@ -213,7 +237,7 @@ openrgb-mcp/
 ├── CONTRACT.md            # 协议与模块契约（开发文档）
 ├── LICENSE                # GPL-3.0
 ├── docs/                  # README 用图（banner.png / states.png）
-├── tools/                 # lamp.py（手动控制 CLI）、demo_states.py、make_state_chart.py
+├── tools/                 # lamp.py（CLI）、ui.py（网页测试台）、demo_states.py、make_state_chart.py
 ├── install/               # DSH 注册配置示例（mcp-config.example.yml）
 └── tests/
     ├── test_renderer.py     # 渲染器单测

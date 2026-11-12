@@ -75,7 +75,12 @@ def list_devices() -> DeviceListResult:
 def status() -> StatusResult:
     """Report the current lamp state: state, LED count, device, SDK port,
     whether the animation is running, active progress/quota and the last error."""
-    return StatusResult(**engine().describe())
+    eng = engine()
+    try:
+        eng.ensure_connected()
+    except Exception:  # noqa: BLE001 - status must work even without OpenRGB
+        pass
+    return StatusResult(**eng.describe())
 
 
 @_server.tool(
