@@ -10,6 +10,8 @@ dist/
 
 # Runtime state cache (SDK port, device name, original colours)
 .state.json
+# Shared registry of the agents that use the lamp
+.agents.json
 tests/.state-test.json
 
 # Local DSH profile backup (private configuration, never committed)

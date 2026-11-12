@@ -80,6 +80,15 @@ class StatusResult(BaseModel):
         description="'global' = the whole strip is controlled as one unit, "
         "'per_led' = every LED is written individually",
     )
+    display_state: str = Field(
+        default="idle",
+        description="state currently shown on the lamp (highest priority of all agents)",
+    )
+    agent_id: str = Field(default="", description="id of this agent in the shared registry")
+    agents: List[dict] = Field(
+        default_factory=list,
+        description="all agents currently sharing the lamp",
+    )
     animate: bool
     fps: int
     brightness: float

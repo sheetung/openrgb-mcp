@@ -76,6 +76,20 @@ OpenRGB 日志记录的端口 → 默认 6742）。
 
 所有动画都是连续曲线，没有硬切换，**不频闪**；颜色、亮度、速度由控制器自己执行，不逐帧重写灯珠。
 
+### 多个 agent 共用一盏灯
+
+几个 agent（多个会话、多个客户端）同时用同一盏灯时不会互相抢：
+
+- 每个 agent 把自己的状态登记到一个共享登记表里，灯显示**优先级最高**的那个：
+
+  `off` > `error` > `waiting` > `working` > `thinking` > `done` > `idle`
+
+- 所有 agent 渲染出的是同一个结果，所以不会出现"两个进程各写各的"导致的闪烁；
+  `status` 里能看到当前有谁在用（`agents`）、灯实际显示的是谁（`display_state`）。
+- 超过 90 秒没上报的 agent 视为已退出，退出时也会自动清理登记。
+- 不需要共享时：`config.json` 里设 `"share_lamp": false`，或用 `OPENRGB_MCP_REGISTRY`
+  指定各自的登记表。
+
 ### 资源（resources）
 
 | URI | 内容 |

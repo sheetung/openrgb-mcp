@@ -2,13 +2,21 @@
 
 Framework-free on purpose - the MCP layer (server.py) is a thin wrapper around
 this class, so the behaviour can be unit tested without a running server.
+
+Several agents may share one lamp (several DSH sessions, an agent plus the
+local test console, ...).  Every engine registers its state in a small shared
+registry file; the lamp then shows the *highest priority* state of all active
+agents and every engine renders that same result - so the agents never fight
+over the hardware and the lamp never flickers.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -22,6 +30,20 @@ from .openrgb import (
 )
 
 STATES = ("idle", "thinking", "working", "waiting", "done", "error", "off")
+
+# which state wins when several agents are active (higher = more urgent)
+STATE_PRIORITY = {
+    "off": 60,
+    "error": 50,
+    "waiting": 40,
+    "working": 30,
+    "thinking": 20,
+    "done": 10,
+    "idle": 0,
+}
+
+# an agent that has not reported for this long is considered gone
+REGISTRY_TTL = 90.0
 
 STATE_ALIASES = {
     "think": "thinking",
@@ -47,6 +69,14 @@ def _load_json(path: Path, default: Any) -> Any:
             return json.load(handle)
     except (OSError, ValueError):
         return default
+
+
+def registry_path() -> Path:
+    """Shared file where agents announce their state."""
+    env = os.environ.get("OPENRGB_MCP_REGISTRY")
+    if env:
+        return Path(env)
+    return state_path().parent / ".agents.json"
 
 
 class StatusEngine:
@@ -77,7 +107,76 @@ class StatusEngine:
         self.last_error: Optional[str] = None
         self.original_colors: Optional[List[str]] = None
 
+        # shared-lamp coordination
+        self.agent_id = os.environ.get("OPENRGB_AGENT_ID") or uuid.uuid4().hex[:8]
+        self.agent_label = os.environ.get("OPENRGB_AGENT_LABEL") or self.agent_id
+        self.share_lamp = bool(self.config.get("share_lamp", True))
+        self.display_state = "idle"
+        self.active_agents: List[Dict[str, Any]] = []
+
         self._load_state_file()
+
+    # -- shared registry -------------------------------------------------
+    def _read_registry(self) -> Dict[str, Dict[str, Any]]:
+        data = _load_json(registry_path(), {})
+        if not isinstance(data, dict):
+            return {}
+        now = time.time()
+        alive: Dict[str, Dict[str, Any]] = {}
+        for agent_id, entry in data.items():
+            if not isinstance(entry, dict):
+                continue
+            if now - float(entry.get("ts", 0)) > REGISTRY_TTL:
+                continue
+            alive[agent_id] = entry
+        return alive
+
+    def _write_registry(self, entries: Dict[str, Dict[str, Any]]) -> None:
+        try:
+            path = registry_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(entries, handle, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def _register(self) -> None:
+        """Announce our state and work out what the lamp should show."""
+        if not self.share_lamp:
+            self.display_state = self.state
+            self.active_agents = [
+                {"id": self.agent_id, "label": self.agent_label, "state": self.state}
+            ]
+            return
+        with self._lock:
+            entries = self._read_registry()
+            entries[self.agent_id] = {
+                "label": self.agent_label,
+                "state": self.state,
+                "detail": self.detail,
+                "pid": os.getpid(),
+                "ts": time.time(),
+            }
+            self._write_registry(entries)
+            self.active_agents = [
+                {
+                    "id": agent_id,
+                    "label": entry.get("label", agent_id),
+                    "state": entry.get("state", "idle"),
+                }
+                for agent_id, entry in entries.items()
+            ]
+            # the most urgent state wins; ties go to the most recent report
+            winner = max(
+                entries.items(),
+                key=lambda item: (
+                    STATE_PRIORITY.get(item[1].get("state", "idle"), 0),
+                    float(item[1].get("ts", 0)),
+                ),
+            )
+            self.display_state = winner[1].get("state", "idle")
+            if winner[0] == self.agent_id:
+                self.display_state = self.state
 
     # -- persistence ----------------------------------------------------
     def _load_state_file(self) -> None:
@@ -144,21 +243,26 @@ class StatusEngine:
             self._drop_connection()
 
     # -- rendering ------------------------------------------------------
+    def owns_display(self) -> bool:
+        """True when this agent is the one whose state the lamp shows."""
+        return not self.share_lamp or self.display_state == self.state
+
     def current_frame(self, tick: Optional[float] = None) -> List[Tuple[int, int, int]]:
         device = self.device
         if device is None:
             return []
         if tick is None:
             tick = time.time() - self.state_since
+        mine = self.owns_display()
         frame = renderer.render(
-            state=self.state,
+            state=self.display_state,
             led_count=device.led_count,
             tick=tick,
             palette=self.palette,
-            color=self.custom_color,
-            progress=self.progress,
-            progress_color=self.progress_color,
-            quota=self.quota,
+            color=self.custom_color if mine else None,
+            progress=self.progress if mine else None,
+            progress_color=self.progress_color if mine else None,
+            quota=self.quota if mine else None,
         )
         brightness = float(self.config.get("brightness") or 1.0)
         if brightness < 1.0:
@@ -181,10 +285,12 @@ class StatusEngine:
             return False
         if not self.config.get("animate", True):
             return False
-        effect = (self.palette.get(self.state) or {}).get("effect", "solid")
+        effect = (self.palette.get(self.display_state) or {}).get("effect", "solid")
         if effect in ("breathe", "pulse", "blink"):
             return True
-        return self.progress is not None or self.quota is not None
+        return self.owns_display() and (
+            self.progress is not None or self.quota is not None
+        )
 
     def start_animation(self) -> None:
         with self._lock:
@@ -206,20 +312,40 @@ class StatusEngine:
     def _loop(self) -> None:
         fps = max(1, min(60, int(self.config.get("fps") or 12)))
         interval = 1.0 / fps
+        last_display = None
         while not self._stop.is_set():
             try:
                 self.ensure_connected()
+                self._register()
                 self._handle_done_hold()
-                if self._needs_animation():
+                if self.display_state != last_display:
+                    # another agent took over (or gave the lamp back)
+                    last_display = self.display_state
+                    self._apply_display()
+                elif self._needs_animation():
                     self._render_once()
                 time.sleep(interval)
             except Exception as exc:  # keep the loop alive, remember the error
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 time.sleep(2.0)
 
+    def _apply_display(self) -> None:
+        """Render whatever state the shared lamp should currently show."""
+        target = self.display_state
+        if self._apply_hardware_state(target):
+            return
+        self.hardware_mode = False
+        try:
+            self.ensure_per_led()
+        except (ConnectionFailed, ProtocolError, OSError):
+            return
+        self._render_once()
+
     def _handle_done_hold(self) -> None:
         hold = float(self.config.get("done_hold_seconds") or 0)
         if self.state != "done" or hold <= 0:
+            return
+        if not self.owns_display():
             return
         if time.time() - self.state_since >= hold:
             self.set_state("idle", detail=None, animate=False)
@@ -308,13 +434,15 @@ class StatusEngine:
             if animate is not None:
                 self.config["animate"] = bool(animate)
             self.ensure_connected()
-            # hardware effect first: the controller does the animation, so the
-            # lamp never strobs and the USB link stays idle
-            if self._apply_hardware_state(normalized):
-                # keep the timer thread alive (it handles done -> idle) but it
-                # must not write frames while the hardware animates
-                self.start_animation()
-                return self.describe()
+            # tell the other agents what we are doing and find out what
+            # the shared lamp should show
+            self._register()
+            self._apply_display()
+            # keep the timer thread alive (it handles done -> idle and picks
+            # up state changes of other agents); it must not write frames
+            # while the hardware animates
+            self.start_animation()
+            return self.describe()
             # fallback: software animation (per-LED writes)
             self.hardware_mode = False
             self.ensure_per_led()
@@ -401,6 +529,7 @@ class StatusEngine:
             self.detail = detail
             self.state_since = time.time()
             self.ensure_connected()
+            self._register()
             if self._global():
                 # whole strip: brightness = progress, colour = state colour
                 spec = self.palette.get(self.state) or {}
@@ -444,6 +573,7 @@ class StatusEngine:
             self.detail = detail
             self.state_since = time.time()
             self.ensure_connected()
+            self._register()
             if self._global():
                 # whole strip: brightness = remaining, colour by tier
                 rgb = (
@@ -581,6 +711,9 @@ class StatusEngine:
                 ),
                 "render_mode": "hardware" if self.hardware_mode else "per_led",
                 "control": self.config.get("control", "global"),
+                "display_state": self.display_state,
+                "agent_id": self.agent_id,
+                "agents": self.active_agents,
                 "animate": bool(self.config.get("animate", True)),
                 "fps": int(self.config.get("fps") or 12),
                 "brightness": float(self.config.get("brightness") or 1.0),
@@ -618,3 +751,11 @@ class StatusEngine:
             if self.client is not None:
                 self.client.close()
             self.client = None
+            # leave the shared registry clean
+            if self.share_lamp:
+                try:
+                    entries = self._read_registry()
+                    entries.pop(self.agent_id, None)
+                    self._write_registry(entries)
+                except OSError:
+                    pass
