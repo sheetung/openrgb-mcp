@@ -101,33 +101,21 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 `status-lamp` —— 说明如何把对话状态映射到灯光，供客户端一键载入。
 
-## 网页测试台（`tools/ui.py`）
+## 本地测试台（不在仓库内）
 
-想在浏览器里点点看：
+本仓库只发布 **MCP server** 本身。为了不把个人调试脚本混进公开仓库，
+网页测试台、命令行控制、状态巡演这些工具留在本机 `tools/` 目录（已加入 `.gitignore`）：
 
-```bash
-cd openrgb-mcp
-.venv/Scripts/python.exe tools/ui.py          # 会自动打开浏览器
-.venv/Scripts/python.exe tools/ui.py --port 9000 --no-browser
-```
+| 本地工具 | 用途 |
+|---|---|
+| `tools/ui.py` + `tools/start_ui.cmd` | 网页测试台：灯带预览、状态/进度/额度控制、双击启动（不弹黑窗口） |
+| `tools/lamp.py` | 命令行手动控制：`state` / `progress` / `quota` / `color` / `effect` / `watch` / `ramp` |
+| `tools/demo_states.py` | 依次跑一遍所有状态并回读硬件实际生效的模式与颜色 |
+| `tools/make_state_chart.py` | 生成本 README 里的状态图（`docs/states.png`） |
 
-页面提供：
+它们都通过**官方 MCP 客户端**驱动，和 DSH / Claude Desktop 走同一条协议链路。
 
-- **灯带预览** —— 按真实渲染器画出 200 颗灯珠（两行各 100，对应两个分区），
-  状态色 / 进度条 / 额度条与实机一致；标注「硬件效果」时表示灯光由控制器自己驱动。
-- **实时状态栏** —— 设备、LED 数、端口、当前状态、硬件模式、渲染路径。
-- **控制面板** —— 7 个状态按钮、进度滑块、额度输入、单色/渐变、设备自带效果、恢复/关灯。
-- **亮度缓升缓降** —— 6 秒正弦渐变（走 MCP 的 `set_leds`），用来肉眼判断硬件渐变是否平滑。
-- **平滑度 Δ** —— 显示相邻两帧之间的最大亮度跳变（硬闪会接近 255）。
-
-所有操作都通过**官方 MCP 客户端**转发给 MCP server，与 DSH/Claude Desktop 同一条链路。
-
-> 注意：页面自己会拉起一个独立的 MCP server 进程，不要在 AI 正在操作灯的同时用它，
-> 两边会互相覆盖状态。
-
-## 手动控制 CLI（`tools/lamp.py`）
-
-不想等 AI，自己手动玩灯：
+命令行用法（`tools/lamp.py`）：
 
 ```bash
 cd openrgb-mcp
@@ -184,7 +172,7 @@ cd openrgb-mcp
 
 ![状态与进度/额度条渲染输出](docs/states.png)
 
-> 上图由 `tools/make_state_chart.py` 调用真实的调色板与亮度映射生成——颜色和亮度就是实机会用的值。
+> 上图由本机的生成脚本调用真实的调色板与亮度映射生成——颜色和亮度就是实机会用的值。
 
 **状态色由控制器自己跑效果**（`Breathing` / `Static` / `Off`），不是逐帧重写 200 颗灯珠：
 灯光由硬件平滑调光，USB 链路零写入，因此**完全不闪、不频闪**。只有进度条 / 额度条 / 自定义图案
@@ -263,7 +251,6 @@ openrgb-mcp/
 ├── CONTRACT.md            # 协议与模块契约（开发文档）
 ├── LICENSE                # GPL-3.0
 ├── docs/                  # README 用图（banner.png / states.png）
-├── tools/                 # lamp.py（CLI）、ui.py（网页测试台）、demo_states.py、make_state_chart.py
 ├── install/               # DSH 注册配置示例（mcp-config.example.yml）
 └── tests/
     ├── test_renderer.py     # 渲染器单测
@@ -294,6 +281,9 @@ openrgb-mcp --self-test                     # 快速探测真实设备
 - 自动同步依赖工作区指令（如 `AGENTS.md`），模型偶尔可能漏调；可显式要求「把状态同步到灯上」。
 - 端口发现依赖 OpenRGB 日志；日志被清空时回落到默认端口 6742，可用 `OPENRGB_PORT` 指定。
 - 每次工具调用都会重连一次 OpenRGB（毫秒级），无长期占用。
+- 默认是**整体控制**（整条灯带一个颜色 + 亮度）；逐灯珠控制只在可寻址灯带上可用，
+  且需要把 `config.json` 的 `control` 改成 `per_led`。
+- 同一时间只让一个程序控制灯光：厂商灯控软件和多个 MCP 进程会互相覆盖。
 
 ## 许可与致谢
 
@@ -302,4 +292,4 @@ openrgb-mcp --self-test                     # 快速探测真实设备
 - [OpenRGB](https://openrgb.org/)（GPLv3）——提供 SDK Server 与硬件控制，本项目通过其公开网络协议交互。
 - [openrgb-python](https://github.com/jath03/openrgb-python)（jath03，GPLv3）——开发期间作为 **v4 协议线格式的参考实现**；本仓库的客户端为独立实现，未复制其源码。
 - [Model Context Protocol Python SDK](https://github.com/modelcontextprotocol/python-sdk)（MIT）——本项目的 MCP 运行时。
-- `docs/states.png` 由 `tools/make_state_chart.py` 调用真实渲染器生成；`docs/banner.png` 为 AI 生成的示意图。
+- `docs/states.png` 由本机脚本按真实调色板与亮度映射生成；`docs/banner.png` 为 AI 生成的示意图。

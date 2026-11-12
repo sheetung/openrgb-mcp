@@ -23,3 +23,7 @@ Thumbs.db
 
 # Local scratch files from the tools (UI logs / screenshots)
 .tmp-*
+
+# Local test console / manual CLI - kept on this machine only, not published.
+# The repository ships the MCP server itself (src/, tests/, docs/).
+/tools/
