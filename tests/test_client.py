@@ -179,6 +179,38 @@ def test_mode_packed_size_prefix():
             client.close()
 
 
+def test_hardware_effect_with_colour():
+    """apply_hardware_effect patches the mode colour and speed in place."""
+    with mock.MockServer() as server:
+        client = OpenRGBClient(port=server.port).connect()
+        try:
+            keyboard = client.find_device("Mock Keyboard")
+            breathing = client.find_mode(keyboard, ("Breathing",))
+            assert breathing is not None
+            assert breathing.mode_specific_color is True
+
+            payload = breathing.with_color(RGBColor(10, 20, 30), brightness=128)
+            declared = struct.unpack_from("<I", payload, 0)[0]
+            assert declared == len(payload), (declared, len(payload))
+            parsed = mock.parse_mode_packet(payload)
+            assert parsed["name"] == "Breathing", parsed
+            assert parsed["brightness"] == 128, parsed
+            assert parsed["colors"] == [(10, 20, 30)], parsed
+
+            device = client.apply_hardware_effect(
+                keyboard, breathing, color=RGBColor(1, 2, 3)
+            )
+            assert device is not None
+            assert server.wait_for_packet(mock.RGBCONTROLLER_UPDATEMODE), \
+                "no UPDATEMODE received"
+            packet = server.last_packet(mock.RGBCONTROLLER_UPDATEMODE)
+            sent = mock.parse_mode_packet(packet["data"])
+            assert sent["name"] == "Breathing", sent
+            assert sent["colors"] == [(1, 2, 3)], sent
+        finally:
+            client.close()
+
+
 def test_wrong_color_count_is_rejected():
     with mock.MockServer() as server:
         client = OpenRGBClient(port=server.port).connect()

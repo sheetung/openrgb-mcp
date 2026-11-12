@@ -107,6 +107,10 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 > 上图由 `tools/make_state_chart.py` 直接调用 `renderer.render()` 生成——每一颗灯珠的颜色都来自真实代码路径，不是手绘示意图。
 
+**状态色由控制器自己跑效果**（`Breathing` / `Static` / `Off`），不是逐帧重写 200 颗灯珠：
+灯光由硬件平滑调光，USB 链路零写入，因此**完全不闪、不频闪**。只有进度条 / 额度条 / 自定义图案
+才切到逐灯珠模式（静态画面，每秒最多写一次）。
+
 来自 `renderer.DEFAULT_PALETTE`，可在 `config.json` 覆盖：
 
 | 状态 | 颜色 | 效果 |
@@ -121,6 +125,8 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 > 所有动画都是**连续曲线**：最暗也保留 20% 亮度，**没有任何硬切换/频闪**，长时间看不会刺眼。
 > 想再调慢：`config.json` 里改 `period`（秒），或改 `effect`（`breathe` / `fade` / `solid` / `off`）。
+> 这些曲线是**软件回退路径**用的——设备自带硬件效果时（绝大多数 ARGB 控制器都有），
+> 状态色直接交给控制器跑，平滑度更好且完全不占 USB 带宽。
 
 自定义示例 `config.json`：
 

@@ -225,6 +225,43 @@ class StatusEngine:
         self.quota = None
         self.custom_color = None
 
+    # hardware effect preference per state: the controller animates on its
+    # own, which is smooth and does not flood the USB link with LED writes
+    _HARDWARE_MODES = {
+        "thinking": ("Breathing", "Breathe", "Fade"),
+        "working": ("Breathing", "Breathe", "Fade"),
+        "waiting": ("Breathing", "Breathe", "Fade"),
+        "error": ("Breathing", "Breathe", "Fade"),
+        "done": ("Static", "Solid"),
+        "idle": ("Static", "Solid"),
+        "off": ("Off", "Dark"),
+    }
+
+    def _apply_hardware_state(self, state: str) -> bool:
+        """Hand the LEDs to the controller's own effect. True when done."""
+        device = self.device
+        if device is None or self.client is None:
+            return False
+        mode = self.client.find_mode(device, self._HARDWARE_MODES.get(state, ()))
+        if mode is None:
+            return False
+        spec = self.palette.get(state) or {}
+        color = None
+        try:
+            color = RGBColor.from_hex(spec.get("color", "#ffffff"))
+        except ValueError:
+            color = None
+        brightness = None
+        if mode.flags & 0x10:  # HAS_BRIGHTNESS
+            brightness = int(round(float(spec.get("brightness", 1.0)) * 255))
+        if state == "off":
+            color = None
+            brightness = 0
+        self.client.apply_hardware_effect(device, mode, color=color, brightness=brightness)
+        self.device = self.client.devices[device.index]
+        self._last_frame = None
+        return True
+
     def set_state(
         self,
         state: str,
@@ -244,9 +281,24 @@ class StatusEngine:
             if animate is not None:
                 self.config["animate"] = bool(animate)
             self.ensure_connected()
+            # hardware effect first: the controller does the animation, so the
+            # lamp never strobs and the USB link stays idle
+            if self._apply_hardware_state(normalized):
+                self.stop_animation()
+                return self.describe()
+            # fallback: software animation (per-LED writes)
+            self.ensure_per_led()
             self._render_once()
             self.start_animation()
             return self.describe()
+
+    def ensure_per_led(self):
+        """Switch the device into a per-LED mode (needed for bars/patterns)."""
+        with self._lock:
+            device = self.ensure_connected()
+            device = self.client.ensure_per_led_mode(device)
+            self.device = device
+            return device
 
     def set_progress(
         self,
@@ -274,9 +326,9 @@ class StatusEngine:
             self.progress_color = color
             self.detail = detail
             self.state_since = time.time()
-            self.ensure_connected()
+            self.ensure_per_led()
+            self.stop_animation()
             self._render_once()
-            self.start_animation()
             result = self.describe()
             result["percent"] = round(value, 1)
             result["filled_leds"] = self._filled_leds(self.progress)
@@ -299,9 +351,9 @@ class StatusEngine:
             self.quota = (int(round(remaining)), int(round(total)))
             self.detail = detail
             self.state_since = time.time()
-            self.ensure_connected()
+            self.ensure_per_led()
+            self.stop_animation()
             self._render_once()
-            self.start_animation()
             result = self.describe()
             result["remaining"] = remaining
             result["total"] = total
@@ -318,15 +370,15 @@ class StatusEngine:
             if brightness is not None:
                 self.config["brightness"] = max(0.0, min(1.0, float(brightness)))
             self.state_since = time.time()
-            self.ensure_connected()
+            self.ensure_per_led()
+            self.stop_animation()
             self._render_once()
-            self.start_animation()
             return self.describe()
 
     def set_leds(self, colors: List[str]) -> Dict[str, Any]:
         parsed = [RGBColor.from_hex(c) for c in colors]
         with self._lock:
-            device = self.ensure_connected()
+            device = self.ensure_per_led()
             if len(parsed) != device.led_count:
                 raise ValueError(
                     f"got {len(parsed)} colors but the device has "
@@ -368,7 +420,7 @@ class StatusEngine:
 
     def restore(self) -> Dict[str, Any]:
         with self._lock:
-            device = self.ensure_connected()
+            device = self.ensure_per_led()
             self.stop_animation()
             colors = self.original_colors
             if colors and len(colors) == device.led_count:

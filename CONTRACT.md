@@ -191,6 +191,16 @@ def render(state: str, led_count: int, tick: float = 0.0,
 状态机与动画在 `src/openrgb_mcp/engine.py`（与 MCP 层解耦，便于单测）；
 配置加载在 `src/openrgb_mcp/config.py`。
 
+### 两条渲染路径
+
+| 路径 | 触发场景 | 机制 | 特点 |
+|---|---|---|---|
+| 硬件效果（首选） | `set_state` 的纯状态 | 用 `UPDATEMODE` 让控制器跑自带效果（`Breathing` / `Static` / `Off`），并把状态色写进模式的 mode-specific color | 硬件平滑调光，USB 零写入，**不闪** |
+| 逐灯珠软件渲染 | 进度条 / 额度条 / 自定义图案 / 设备没有硬件效果时 | `UPDATEMLEDS` 写入每颗灯珠 | 静态画面；动画帧变化极小（实测相邻帧亮度差 ≤ 19，硬闪约为 255） |
+
+`openrgb.py` 记录了 mode 内部 `speed` / `brightness` / `colors` 字段的字节偏移，
+因此可以在不动其它字段的前提下就地改色（`Mode.with_color()`），避免重排协议结构。
+
 ## 7. 打包与入口
 
 - `pyproject.toml`（hatchling）：包名 `openrgb-mcp`，`src/openrgb_mcp` 为包目录，

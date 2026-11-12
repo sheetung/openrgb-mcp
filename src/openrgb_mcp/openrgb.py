@@ -159,10 +159,31 @@ class Mode:
     color_mode: int
     num_colors: int
     raw: bytes  # packed payload WITHOUT the leading u32 size field
+    colors: List[RGBColor] = field(default_factory=list)
+    speed_offset: int = -1
+    brightness_offset: int = -1
+    colors_offset: int = -1
 
     @property
     def per_led(self) -> bool:
         return bool(self.flags & F_HAS_PER_LED_COLOR)
+
+    @property
+    def mode_specific_color(self) -> bool:
+        """True when the mode takes its colour from the mode payload."""
+        return self.color_mode == 2
+
+    def with_color(self, color: RGBColor, brightness: Optional[int] = None) -> bytes:
+        """Return the UPDATEMODE payload with a new colour (and brightness)."""
+        body = bytearray(self.raw)
+        if self.num_colors and self.colors_offset >= 0:
+            start = self.colors_offset
+            end = start + 4 * self.num_colors
+            body[start:end] = struct.pack("<BBBx", color.r, color.g, color.b) * self.num_colors
+        if brightness is not None and self.brightness_offset >= 0:
+            start = self.brightness_offset
+            body[start:start + 4] = struct.pack("<I", max(0, min(255, int(brightness))))
+        return struct.pack("<I", len(body) + 4) + bytes(body)
 
     @property
     def packed(self) -> bytes:
@@ -310,14 +331,24 @@ def _parse_mode(cursor: _Cursor, version: int, index: int) -> Mode:
         cursor.u32()  # brightness_max
     cursor.u32()  # colors_min
     cursor.u32()  # colors_max
+    speed_at = cursor.pos
     speed = cursor.u32()
-    brightness = cursor.u32() if version >= 3 else 0
+    brightness_at = -1
+    brightness = 0
+    if version >= 3:
+        brightness_at = cursor.pos
+        brightness = cursor.u32()
     cursor.u32()  # direction
     color_mode = cursor.u32()
     num_colors = cursor.u16()
+    colors_at = cursor.pos
+    colors: List[RGBColor] = []
     for _ in range(num_colors):
-        cursor.color()
+        colors.append(cursor.color())
     raw = struct.pack("<i", index) + cursor.data[start:cursor.pos]
+    # offsets inside ``raw`` (raw starts with the i32 mode id) so that the
+    # speed / brightness / colour fields can be patched in place
+    base = start - 4
     return Mode(
         index=index,
         name=name,
@@ -328,6 +359,10 @@ def _parse_mode(cursor: _Cursor, version: int, index: int) -> Mode:
         color_mode=color_mode,
         num_colors=num_colors,
         raw=raw,
+        colors=colors,
+        speed_offset=speed_at - base,
+        brightness_offset=(brightness_at - base) if brightness_at >= 0 else -1,
+        colors_offset=colors_at - base,
     )
 
 
@@ -691,6 +726,41 @@ class OpenRGBClient:
     def _apply_mode(self, device: Device, mode: Mode) -> None:
         with self._lock:
             self._send(device.index, P_UPDATE_MODE, mode.packed)
+
+    # -- hardware effects ------------------------------------------------
+    @staticmethod
+    def find_mode(device: Device, names: Sequence[str]) -> Optional[Mode]:
+        """First mode whose name matches one of ``names`` (case-insensitive)."""
+        for wanted in names:
+            needle = wanted.strip().lower()
+            for mode in device.modes:
+                if mode.name.strip().lower() == needle:
+                    return mode
+        for wanted in names:
+            needle = wanted.strip().lower()
+            for mode in device.modes:
+                if needle in mode.name.strip().lower():
+                    return mode
+        return None
+
+    def apply_hardware_effect(
+        self,
+        device: Device,
+        mode: Mode,
+        color: Optional[RGBColor] = None,
+        brightness: Optional[int] = None,
+    ) -> Device:
+        """Let the controller run one of its own effects.
+
+        The device then animates on its own (smooth, no USB traffic), which is
+        why state colours use this path instead of re-writing every LED.
+        """
+        with self._lock:
+            payload = mode.packed
+            if color is not None and mode.num_colors:
+                payload = mode.with_color(color, brightness=brightness)
+            self._send(device.index, P_UPDATE_MODE, payload)
+            return self._refresh_one(device.index)
 
     # -- colors ---------------------------------------------------------
     def set_device_colors(
