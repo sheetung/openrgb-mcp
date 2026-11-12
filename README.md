@@ -101,47 +101,6 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 `status-lamp` —— 说明如何把对话状态映射到灯光，供客户端一键载入。
 
-## 本地测试台（不在仓库内）
-
-本仓库只发布 **MCP server** 本身。为了不把个人调试脚本混进公开仓库，
-网页测试台、命令行控制、状态巡演这些工具留在本机 `tools/` 目录（已加入 `.gitignore`）：
-
-| 本地工具 | 用途 |
-|---|---|
-| `tools/ui.py` + `tools/start_ui.cmd` | 网页测试台：灯带预览、状态/进度/额度控制、双击启动（不弹黑窗口） |
-| `tools/lamp.py` | 命令行手动控制：`state` / `progress` / `quota` / `color` / `effect` / `watch` / `ramp` |
-| `tools/demo_states.py` | 依次跑一遍所有状态并回读硬件实际生效的模式与颜色 |
-| `tools/make_state_chart.py` | 生成本 README 里的状态图（`docs/states.png`） |
-
-它们都通过**官方 MCP 客户端**驱动，和 DSH / Claude Desktop 走同一条协议链路。
-
-命令行用法（`tools/lamp.py`）：
-
-```bash
-cd openrgb-mcp
-.venv/Scripts/python.exe tools/lamp.py --help      # Windows
-.venv/bin/python tools/lamp.py --help              # Linux / macOS
-```
-
-| 命令 | 作用 |
-|---|---|
-| `lamp.py devices` | 设备 / 分区 / 模式清单 |
-| `lamp.py status` | 当前模式与灯珠数 |
-| `lamp.py state thinking` | 切状态（`idle/thinking/working/waiting/done/error/off`），`--detail "说明"` |
-| `lamp.py progress 60` / `progress 3/10` | 进度条（百分比或 done/total） |
-| `lamp.py quota 30 100` | 剩余额度条 |
-| `lamp.py color "#ff8800" --brightness 0.7` | 全灯单色 |
-| `lamp.py gradient "#ff0000" "#0000ff"` | 逐灯珠渐变 |
-| `lamp.py leds "#ff0000,#00ff00,#0000ff"` | 逐灯指定颜色 |
-| `lamp.py led 0 "#00ff00"` | 只点亮第 N 颗灯（查坏灯用） |
-| `lamp.py effect Breathing --color "#3a86ff"` | 设备自带效果（Wave/Breathing/Static/…） |
-| `lamp.py ramp --seconds 6` | 亮度缓升缓降，检验硬件渐变是否平滑 |
-| `lamp.py watch --delay 3` | 依次演示所有状态 |
-| `lamp.py off` / `lamp.py restore` | 关灯 / 恢复原始灯效 |
-
-全局选项：`--via-mcp`（改走 MCP 服务器，验证完整协议链路）、`--device NAME`（选设备）、
-`--port N`（指定端口）、`--json`（机器可读输出）。
-
 ## 控制方式：整体控制（默认）
 
 灯接的是**机箱散热风扇**（ARGB 排针），灯珠位置无法对应到具体风扇，所以默认按**整条灯带一个颜色**控制：
