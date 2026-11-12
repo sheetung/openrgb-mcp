@@ -144,11 +144,11 @@ class OpenRGBClient:
 ```python
 DEFAULT_PALETTE = {
     "idle":     {"color": "#2a3a5a", "brightness": 0.25, "effect": "breathe", "period": 4.0},
-    "thinking": {"color": "#3a86ff", "brightness": 0.85, "effect": "breathe", "period": 1.2},
-    "working":  {"color": "#00d4ff", "brightness": 0.9,  "effect": "breathe", "period": 2.0},
-    "waiting":  {"color": "#ffb703", "brightness": 0.9,  "effect": "pulse",   "period": 1.5},
+    "thinking": {"color": "#3a86ff", "brightness": 0.85, "effect": "breathe", "period": 2.4},
+    "working":  {"color": "#00d4ff", "brightness": 0.9,  "effect": "breathe", "period": 3.2},
+    "waiting":  {"color": "#ffb703", "brightness": 0.9,  "effect": "fade",    "period": 3.6},
     "done":     {"color": "#2ecc71", "brightness": 1.0,  "effect": "solid",   "period": 0},
-    "error":    {"color": "#ff4d4f", "brightness": 1.0,  "effect": "blink",   "period": 0.5},
+    "error":    {"color": "#ff4d4f", "brightness": 1.0,  "effect": "fade",    "period": 2.8},
     "off":      {"color": "#000000", "brightness": 0.0,  "effect": "off",     "period": 0},
 }
 
@@ -165,7 +165,13 @@ def render(state: str, led_count: int, tick: float = 0.0,
 - 永远返回恰好 `led_count` 个 `(r,g,b)` 0..255 整数元组。
 - `state` 未知时按 idle 渲染。
 - progress/quota 条：`filled = round(clamp(frac,0,1) * led_count)`；已点亮格使用状态色（progress_color 优先），未点亮格用 empty_color。剩余额度颜色：`frac > 0.5` 绿 `#2ecc71`，`0.2 < frac <= 0.5` 琥珀 `#ffb703`，`frac <= 0.2` 红 `#ff4d4f`。
-- 动画：`breathe` 亮度 = base * (0.55 + 0.45*(0.5+0.5*sin(2π*tick/period)))；`blink`：周期内前 50% 亮、后 50% 灭；`pulse`：见实现（smooth 方形脉冲）；`solid`、`off` 固定。
+- 动画（**全部是连续曲线，不允许硬切换**）：
+  - `breathe`：base * (0.55 + 0.45*(0.5+0.5*sin(2π*tick/period)))，55%..100%；
+  - `fade`：base * (0.2 + 0.8*(0.5-0.5*cos(2π*tick/period)))，20%..100%，永不熄黑；
+  - `blink`：历史名称，等同 `fade`（避免频闪）；
+  - `pulse`：smooth 方形脉冲，因子 0.2..1.0；
+  - `solid`、`off` 固定。
+  - 默认调色板中所有动画状态 `period ≥ 2.0s`，避免刺眼。
 - 单元测试 `tests/test_renderer.py`：纯 `assert` + 末尾打印 `OK`，`python tests/test_renderer.py` 可跑（无 pytest 依赖）。
 
 ## 6. MCP server（`src/openrgb_mcp/server.py`）

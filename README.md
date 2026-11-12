@@ -111,13 +111,16 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 | 状态 | 颜色 | 效果 |
 |---|---|---|
-| `idle` | `#2a3a5a` 暗蓝 | 呼吸 4s，亮度 25% |
-| `thinking` | `#3a86ff` 蓝 | 呼吸 1.2s |
-| `working` | `#00d4ff` 青 | 呼吸 2s |
-| `waiting` | `#ffb703` 琥珀 | 脉冲 1.5s |
+| `idle` | `#2a3a5a` 暗蓝 | 缓慢呼吸 4.0s，亮度 25% |
+| `thinking` | `#3a86ff` 蓝 | 柔和呼吸 2.4s |
+| `working` | `#00d4ff` 青 | 柔和呼吸 3.2s |
+| `waiting` | `#ffb703` 琥珀 | 缓慢明暗过渡 3.6s |
 | `done` | `#2ecc71` 绿 | 常亮（默认 8s 后回 idle，见 `done_hold_seconds`） |
-| `error` | `#ff4d4f` 红 | 闪烁 0.5s |
+| `error` | `#ff4d4f` 红 | 缓慢明暗过渡 2.8s |
 | `off` | 全黑 | 关闭 |
+
+> 所有动画都是**连续曲线**：最暗也保留 20% 亮度，**没有任何硬切换/频闪**，长时间看不会刺眼。
+> 想再调慢：`config.json` 里改 `period`（秒），或改 `effect`（`breathe` / `fade` / `solid` / `off`）。
 
 自定义示例 `config.json`：
 

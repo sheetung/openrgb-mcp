@@ -62,17 +62,21 @@ def assert_pixels(pixels, count):
 def test_default_palette_matches_contract():
     expected = {
         "idle":     {"color": "#2a3a5a", "brightness": 0.25, "effect": "breathe", "period": 4.0},
-        "thinking": {"color": "#3a86ff", "brightness": 0.85, "effect": "breathe", "period": 1.2},
-        "working":  {"color": "#00d4ff", "brightness": 0.9,  "effect": "breathe", "period": 2.0},
-        "waiting":  {"color": "#ffb703", "brightness": 0.9,  "effect": "pulse",   "period": 1.5},
+        "thinking": {"color": "#3a86ff", "brightness": 0.85, "effect": "breathe", "period": 2.4},
+        "working":  {"color": "#00d4ff", "brightness": 0.9,  "effect": "breathe", "period": 3.2},
+        "waiting":  {"color": "#ffb703", "brightness": 0.9,  "effect": "fade",    "period": 3.6},
         "done":     {"color": "#2ecc71", "brightness": 1.0,  "effect": "solid",   "period": 0},
-        "error":    {"color": "#ff4d4f", "brightness": 1.0,  "effect": "blink",   "period": 0.5},
+        "error":    {"color": "#ff4d4f", "brightness": 1.0,  "effect": "fade",    "period": 2.8},
         "off":      {"color": "#000000", "brightness": 0.0,  "effect": "off",     "period": 0},
     }
     assert DEFAULT_PALETTE == expected
     assert tuple(DEFAULT_PALETTE) == (
         "idle", "thinking", "working", "waiting", "done", "error", "off")
     assert renderer.STATES == tuple(DEFAULT_PALETTE)
+    # no hard strobe anywhere: every animated state is slow and continuous
+    for name, spec in DEFAULT_PALETTE.items():
+        if spec["effect"] in ("breathe", "fade", "blink", "pulse"):
+            assert spec["period"] >= 2.0, (name, spec)
 
 
 def test_hex_parsing():
@@ -176,25 +180,47 @@ def test_breathe_monotonic_and_bounded():
         assert samples[60] == trough, (state, samples[60], trough)
 
 
-def test_blink_alternates():
-    period = DEFAULT_PALETTE["error"]["period"]
-    assert period == 0.5
-    for tick in (0.0, 0.1, 0.249):
-        assert render("error", 3, tick=tick) == [ERROR] * 3, tick
-    for tick in (0.25, 0.4, 0.499, 0.75, 1.25):
-        assert render("error", 3, tick=tick) == [BLACK] * 3, tick
-    assert render("error", 3, tick=0.5) == [ERROR] * 3
-    assert render("error", 3, tick=1.0) == [ERROR] * 3
+def test_fade_is_smooth_and_never_black():
+    """'error'/'waiting' fade instead of blinking: continuous, never black."""
+    for state in ("error", "waiting"):
+        spec = DEFAULT_PALETTE[state]
+        color = parse_hex_color(spec["color"])
+        period = spec["period"]
+        assert period >= 2.0, (state, period)
+        samples = [render(state, 1, tick=index * period / 40)[0] for index in range(41)]
+        # never a hard blackout - the lamp stays softly lit
+        for pixel in samples:
+            assert pixel != BLACK, (state, pixel)
+            assert max(pixel) >= 1, (state, pixel)
+        # the curve is continuous: neighbouring frames never jump far
+        # (a hard blink would jump by the full colour range)
+        for previous, current in zip(samples, samples[1:]):
+            jump = max(abs(a - b) for a, b in zip(previous, current))
+            assert jump <= 30, (state, previous, current, jump)
+        total_jump = max(
+            max(abs(a - b) for a, b in zip(first, last))
+            for first, last in zip(samples, samples[1:])
+        )
+        assert total_jump < 120, (state, total_jump)
+        # it does dip and come back
+        assert max(samples, key=max) != min(samples, key=max)
+        # a legacy "blink" palette entry is softened too, never a hard switch
+        legacy = render(state, 1, tick=period / 2, palette={state: {"effect": "blink"}})
+        assert legacy[0] != BLACK, legacy
 
 
 def test_pulse_varies_and_is_bounded():
-    spec = DEFAULT_PALETTE["waiting"]
+    """The optional 'pulse' effect (not used by the default palette any more)."""
+    palette = {"waiting": {"effect": "pulse", "period": 2.0, "brightness": 0.9}}
+    spec = {"color": "#ffb703", "brightness": 0.9, "period": 2.0}
     color = parse_hex_color(spec["color"])
-    period = spec["period"]
     brightness = spec["brightness"]
     ceiling = apply_color(color, brightness * 1.0)
 
-    samples = [render("waiting", 1, tick=index * period / 20)[0] for index in range(21)]
+    samples = [
+        render("waiting", 1, tick=index * spec["period"] / 20, palette=palette)[0]
+        for index in range(21)
+    ]
     assert len(set(samples)) >= 5, "pulse must vary over a period"
 
     peak = samples[5]    # phase 0.25 (sin maximum)
@@ -258,8 +284,8 @@ def test_progress_clamps_and_uses_python_round():
 
 
 def test_progress_overrides_animation():
-    # error blinks dark during the second half of its 0.5 s period ...
-    assert render("error", 8, tick=0.4) == [BLACK] * 8
+    # the error state fades smoothly and is never fully black ...
+    assert render("error", 8, tick=0.4) != [BLACK] * 8
     # ... but a progress bar is static and replaces the state effect.
     assert render("error", 8, tick=0.4, progress=0.5) == [ERROR] * 4 + [EMPTY] * 4
 
@@ -314,10 +340,10 @@ def test_color_override():
     # invalid hex falls back to the palette colour
     assert render("done", 3, color="#zzzzzz") == [DONE] * 3
     # brightness/animation of the state are preserved
-    expected = apply_color((255, 255, 255), 0.85 * breathe_factor(0.0, 1.2))
+    expected = apply_color((255, 255, 255), 0.85 * breathe_factor(0.0, 2.4))
     assert render("thinking", 2, tick=0.0, color="#ffffff") == [expected] * 2
-    # color override does not defeat the blink effect
-    assert render("error", 5, tick=0.4, color="#00ff00") == [BLACK] * 5
+    # color override does not defeat the state effect either
+    assert render("error", 5, tick=0.4, color="#00ff00") != [BLACK] * 5
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +452,7 @@ TESTS = [
     test_done_state_is_solid,
     test_breathe_matches_contract_formula,
     test_breathe_monotonic_and_bounded,
-    test_blink_alternates,
+    test_fade_is_smooth_and_never_black,
     test_pulse_varies_and_is_bounded,
     test_unknown_state_falls_back_to_idle,
     test_state_name_normalization,

@@ -9,13 +9,16 @@ bar.
 Animation model (``tick`` is seconds relative to an arbitrary origin):
 
     breathe   brightness = base * (0.55 + 0.45 * (0.5 + 0.5*sin(2*pi*tick/period)))
-    blink     lit during the first half of ``period``, dark during the second
+    fade      smooth dip to 20% and back, never fully black (no strobing)
+    blink     legacy name for ``fade`` - kept soft on purpose
     pulse     smooth square pulse, brightness factor in [0.2, 1.0] of ``base``
     solid     full ``base`` brightness
     off       always black
 
-``breathe``, ``blink`` and ``pulse`` need a positive ``period``; a zero/absent
-period makes them behave like ``solid``.
+Every time-based effect is a continuous curve, so the lamp never strobes:
+there is no hard on/off switch anywhere in the palette.  ``breathe``, ``fade``,
+``blink`` and ``pulse`` need a positive ``period``; a zero/absent period makes
+them behave like ``solid``.
 
 Bars (``progress`` / ``quota``) are static -- ``tick`` is ignored for them --
 and take precedence over the state effect: lit cells use the bar colour at full
@@ -49,11 +52,11 @@ __all__ = ["DEFAULT_PALETTE", "STATES", "render", "parse_hex_color"]
 
 DEFAULT_PALETTE = {
     "idle":     {"color": "#2a3a5a", "brightness": 0.25, "effect": "breathe", "period": 4.0},
-    "thinking": {"color": "#3a86ff", "brightness": 0.85, "effect": "breathe", "period": 1.2},
-    "working":  {"color": "#00d4ff", "brightness": 0.9,  "effect": "breathe", "period": 2.0},
-    "waiting":  {"color": "#ffb703", "brightness": 0.9,  "effect": "pulse",   "period": 1.5},
+    "thinking": {"color": "#3a86ff", "brightness": 0.85, "effect": "breathe", "period": 2.4},
+    "working":  {"color": "#00d4ff", "brightness": 0.9,  "effect": "breathe", "period": 3.2},
+    "waiting":  {"color": "#ffb703", "brightness": 0.9,  "effect": "fade",    "period": 3.6},
     "done":     {"color": "#2ecc71", "brightness": 1.0,  "effect": "solid",   "period": 0},
-    "error":    {"color": "#ff4d4f", "brightness": 1.0,  "effect": "blink",   "period": 0.5},
+    "error":    {"color": "#ff4d4f", "brightness": 1.0,  "effect": "fade",    "period": 2.8},
     "off":      {"color": "#000000", "brightness": 0.0,  "effect": "off",     "period": 0},
 }
 
@@ -194,7 +197,11 @@ def _effect(spec: dict) -> str:
 
 
 def _wave_factor(effect: str, tick: float, period: float) -> float:
-    """Brightness multiplier in [0.0, 1.0] for ``effect`` at ``tick``."""
+    """Brightness multiplier in [0.0, 1.0] for ``effect`` at ``tick``.
+
+    Every effect is a continuous curve - the lamp eases between two
+    brightness levels instead of switching on and off, so it never strobes.
+    """
     if effect == "off":
         return 0.0
     if effect == "solid":
@@ -204,14 +211,15 @@ def _wave_factor(effect: str, tick: float, period: float) -> float:
         return 1.0
 
     phase = (tick % period) / period
-
-    if effect == "blink":
-        return 1.0 if phase < 0.5 else 0.0
-
     angle = 2.0 * math.pi * phase
 
     if effect == "breathe":
+        # Smooth 55%..100% wave - gentle amplitude, no hard edges.
         return 0.55 + 0.45 * (0.5 + 0.5 * math.sin(angle))
+
+    if effect in ("fade", "blink"):
+        # Gentle dip to 20% and back; never reaches black, never hard-cuts.
+        return 0.2 + 0.8 * (0.5 - 0.5 * math.cos(angle))
 
     if effect == "pulse":
         # Smooth square pulse: fast rise/fall around a soft plateau.

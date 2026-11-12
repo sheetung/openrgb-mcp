@@ -94,8 +94,9 @@ def set_state(
 
     state: idle | thinking | working | waiting | done | error | off
     (aliases such as complete/failed/ask are accepted).
-    thinking = blue breathing, working = cyan breathing, waiting = amber pulse,
-    done = solid green, error = red blinking, idle = dim blue breathing,
+    All animations are slow, continuous fades - the lamp never strobes.
+    thinking = blue breathing, working = cyan breathing, waiting = amber fade,
+    done = solid green, error = red fade, idle = dim blue breathing,
     off = lights out. detail is a short note kept in the status output.
     animate: set to false to freeze the effect."""
     return StatusResult(**engine().set_state(state, detail=detail, animate=animate))
