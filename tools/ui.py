@@ -470,6 +470,15 @@ def make_handler(ui: LampUI):
         def log_message(self, fmt, *args):  # keep the console quiet
             pass
 
+        def handle_error(self, request, client_address):
+            """Ignore clients that hang up early (browser refresh, etc.)."""
+            import sys as _sys
+            exc = _sys.exc_info()[1]
+            if isinstance(exc, (ConnectionResetError, BrokenPipeError,
+                                ConnectionAbortedError, TimeoutError)):
+                return
+            super().handle_error(request, client_address)
+
         def _send(self, code: int, body: bytes, content_type: str) -> None:
             self.send_response(code)
             self.send_header("Content-Type", content_type)

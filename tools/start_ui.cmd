@@ -1,6 +1,6 @@
 @echo off
-REM 启动状态灯网页测试台（不弹出黑色控制台窗口）
-REM 用法：双击运行，或 start "" tools\start_ui.cmd
+REM Start the OpenRGB lamp test console (no black console window).
+REM Usage: double-click this file, or: start "" tools\start_ui.cmd
 setlocal
 set "ROOT=%~dp0.."
 cd /d "%ROOT%"
