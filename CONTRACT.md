@@ -94,7 +94,7 @@ num_colors × 4B 颜色
 ```
 `str` 打包：`struct.pack("<H", len(b)+1) + b + b"\0"`，b = utf-8 编码。
 
-## 3. 客户端 API（`openrgb_client.py`，Lead 实现）
+## 3. 客户端 API（`src/openrgb_mcp/openrgb.py`，Lead 实现）
 
 ```python
 class ProtocolError(Exception): ...
@@ -139,7 +139,7 @@ class OpenRGBClient:
 3. 6742（OpenRGB 默认端口）
 每次候选都做协议握手验证（ORGB 帧），成功即返回。结果缓存到 `state.json`。
 
-## 5. 渲染器 API（`renderer.py`，由 renderer-dev 实现，纯函数、无 IO/网络）
+## 5. 渲染器 API（`src/openrgb_mcp/renderer.py`，纯函数、无 IO/网络）
 
 ```python
 DEFAULT_PALETTE = {
@@ -168,8 +168,39 @@ def render(state: str, led_count: int, tick: float = 0.0,
 - 动画：`breathe` 亮度 = base * (0.55 + 0.45*(0.5+0.5*sin(2π*tick/period)))；`blink`：周期内前 50% 亮、后 50% 灭；`pulse`：见实现（smooth 方形脉冲）；`solid`、`off` 固定。
 - 单元测试 `tests/test_renderer.py`：纯 `assert` + 末尾打印 `OK`，`python tests/test_renderer.py` 可跑（无 pytest 依赖）。
 
-## 6. MCP server（`server.py`，Lead 实现）
-stdio JSON-RPC 2.0，协议版本 `2024-11-05`。工具见 server.py 内 `TOOLS`。工具名（原始名，前缀由 DSH 加 `mcp__openrgb__`）：
-- `list_devices`、`status`、`set_state`、`set_progress`、`set_quota`、`set_color`、`set_leds`、`restore`、`sync_from_dsh`
+## 6. MCP server（`src/openrgb_mcp/server.py`）
 
-（其余细节以 Lead 的 server.py 为准。）
+基于**官方 MCP Python SDK**（`mcp>=2.0`）的 `MCPServer`：
+
+- 传输：`stdio`（默认）/ `streamable-http` / `sse`，命令行 `--transport/--host/--port`。
+- 工具用 `@mcp.tool(...)` 声明，参数用类型注解生成 `inputSchema`，返回值用 Pydantic 模型
+  （`src/openrgb_mcp/models.py`）生成 `outputSchema` 与 `structuredContent`；
+  `annotations` 声明只读 / 幂等 / 破坏性语义。
+- 资源：`openrgb://status`、`openrgb://devices`（`@mcp.resource`，mime type `application/json`）。
+- 提示词：`status-lamp`（`@mcp.prompt`）。
+- 工具名（原始名，客户端会加 `mcp__openrgb__` 前缀）：
+  `list_devices`、`status`、`set_state`、`set_progress`、`set_quota`、`set_color`、
+  `set_leds`、`set_effect`、`restore`。
+
+状态机与动画在 `src/openrgb_mcp/engine.py`（与 MCP 层解耦，便于单测）；
+配置加载在 `src/openrgb_mcp/config.py`。
+
+## 7. 打包与入口
+
+- `pyproject.toml`（hatchling）：包名 `openrgb-mcp`，`src/openrgb_mcp` 为包目录，
+  依赖 `mcp>=2.0`，控制台入口 `openrgb-mcp = openrgb_mcp.server:main`。
+- 仓库根的 `server.py` 是薄壳入口（`python server.py` 等价于 `python -m openrgb_mcp`），
+  便于既有客户端配置继续指向 `server.py`。
+- `python -m openrgb_mcp --self-test` 探测真实设备并打印当前状态。
+
+## 8. 测试
+
+| 文件 | 内容 |
+|---|---|
+| `tests/test_renderer.py` | 渲染器单测（纯 assert，无需 pytest） |
+| `tests/mock_openrgb.py` | mock SDK server（含故障注入） |
+| `tests/test_client.py` | SDK 协议回归（13 项，mock 服务器） |
+| `tests/test_mcp_protocol.py` | **官方 MCP 客户端 SDK** 端到端（mock 设备）：握手、resources、prompts、tools 列表、input/output schema、annotations、结构化输出、错误路径 |
+| `tests/smoke_mcp.py` | 官方 MCP 客户端 SDK 端到端（真实设备） |
+
+协议协商结果：客户端 `mcp` 2.3 与服务端协商为 MCP 协议版本 `2025-11-25`。

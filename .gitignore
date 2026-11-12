@@ -2,15 +2,20 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
+dist/
+
+# Virtualenv created inside the repo (holds the mcp dependency)
 .venv/
 
-# 运行期状态（端口/设备/原始灯效缓存）
+# Runtime state cache (SDK port, device name, original colours)
 .state.json
+tests/.state-test.json
 
-# 本机 DSH profile 备份（含私人配置，不入库）
+# Local DSH profile backup (private configuration, never committed)
 backup/
 
-# 编辑器 / 系统
+# Editors / OS
 .vscode/
 .idea/
 Thumbs.db

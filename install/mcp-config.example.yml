@@ -9,13 +9,18 @@
 #         config:
 #           serverName: "openrgb"
 #           transport: "stdio"
-#           command: "<python.exe 绝对路径>"      # 任意 Python 3.10+
-#           args: ["<仓库路径>/server.py"]
-#           cwd: "<仓库路径>"
+#           command: "<openrgb-mcp 可执行文件的绝对路径>"
 #           toolCallTimeoutMs: 20000
 #           reconnect:
 #             enabled: true
 #             maxAttempts: 30
+#
+# command 填下面任意一种（必须是绝对路径）：
+#   pipx / uvx 安装： <用户目录>/.local/bin/openrgb-mcp        (Linux/macOS)
+#                     C:\Users\<你>\AppData\Local\bin\openrgb-mcp.exe   (Windows)
+#   仓库内 venv：     <仓库>/.venv/Scripts/openrgb-mcp.exe      (Windows)
+#                     <仓库>/.venv/bin/openrgb-mcp              (Linux/macOS)
+#   直接用解释器：     <仓库>/.venv/Scripts/python.exe  + args: ["<仓库>/server.py"]
 #
 # 保存后 DSH 会热加载，无需重启；模型侧工具名形如 mcp__openrgb__set_state。
 #
@@ -25,3 +30,5 @@
 # 可选环境变量：
 #   OPENRGB_PORT=6742   强制指定 SDK 端口
 #   OPENRGB_DEVICE      按名称片段选择设备（默认第一个）
+#   OPENRGB_MCP_CONFIG  指定 config.json 路径
+#   OPENRGB_MCP_STATE   指定运行状态缓存路径

@@ -15,13 +15,13 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-for path in (ROOT, HERE):
+for path in (os.path.join(ROOT, "src"), ROOT, HERE):
     if path not in sys.path:
         sys.path.insert(0, path)
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont  # noqa: E402
 
-import renderer  # noqa: E402
+from openrgb_mcp import renderer  # noqa: E402
 
 W, H = 1680, 880
 BG = (11, 13, 18)

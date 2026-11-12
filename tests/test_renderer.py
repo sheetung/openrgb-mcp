@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for ``openrgb-mcp/renderer.py`` (CONTRACT.md §5).
+"""Unit tests for ``openrgb_mcp.renderer`` (CONTRACT.md §5).
 
 Pure standard library, plain ``assert`` statements, no pytest required:
 
@@ -13,10 +13,15 @@ import math
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-import renderer  # noqa: E402  (path set up above)
-from renderer import DEFAULT_PALETTE, parse_hex_color, render  # noqa: E402
+from openrgb_mcp import renderer  # noqa: E402  (path set up above)
+from openrgb_mcp.renderer import (  # noqa: E402  (path set up above)
+    DEFAULT_PALETTE,
+    parse_hex_color,
+    render,
+)
 
 
 EMPTY = parse_hex_color("#0a0a0f")          # (10, 10, 15)

@@ -1,4 +1,4 @@
-"""OpenRGB SDK client (pure standard library).
+"""OpenRGB SDK client (pure standard library, no third-party dependencies).
 
 Protocol reference: OpenRGB SDK, protocol version 4 (negotiated with the
 server - the local OpenRGB build speaks v5, we negotiate down to v4).
@@ -6,8 +6,8 @@ server - the local OpenRGB build speaks v5, we negotiate down to v4).
 Framing:  b"ORGB" + u32 device_index + u32 packet_type + u32 packet_size + data
 Colors:   4 bytes per LED, struct layout "BBBx" (r, g, b, pad).
 
-Includes port discovery for this machine (OpenRGB here runs on a non-default
-port; the SDK server port is logged by OpenRGB at startup).
+Includes port discovery: OpenRGB can run its SDK server on a non-default
+port, and that port is written to the OpenRGB log at startup.
 """
 
 from __future__ import annotations

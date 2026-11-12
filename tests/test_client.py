@@ -16,12 +16,12 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-for path in (ROOT, HERE):
+for path in (os.path.join(ROOT, "src"), ROOT, HERE):
     if path not in sys.path:
         sys.path.insert(0, path)
 
 import mock_openrgb as mock  # noqa: E402
-from openrgb_client import (  # noqa: E402
+from openrgb_mcp.openrgb import (  # noqa: E402
     ConnectionFailed,
     OpenRGBClient,
     ProtocolError,
