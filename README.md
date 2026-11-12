@@ -101,6 +101,35 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 
 `status-lamp` —— 说明如何把对话状态映射到灯光，供客户端一键载入。
 
+## 手动控制 CLI（`tools/lamp.py`）
+
+不想等 AI，自己手动玩灯：
+
+```bash
+cd openrgb-mcp
+.venv/Scripts/python.exe tools/lamp.py --help      # Windows
+.venv/bin/python tools/lamp.py --help              # Linux / macOS
+```
+
+| 命令 | 作用 |
+|---|---|
+| `lamp.py devices` | 设备 / 分区 / 模式清单 |
+| `lamp.py status` | 当前模式与灯珠数 |
+| `lamp.py state thinking` | 切状态（`idle/thinking/working/waiting/done/error/off`），`--detail "说明"` |
+| `lamp.py progress 60` / `progress 3/10` | 进度条（百分比或 done/total） |
+| `lamp.py quota 30 100` | 剩余额度条 |
+| `lamp.py color "#ff8800" --brightness 0.7` | 全灯单色 |
+| `lamp.py gradient "#ff0000" "#0000ff"` | 逐灯珠渐变 |
+| `lamp.py leds "#ff0000,#00ff00,#0000ff"` | 逐灯指定颜色 |
+| `lamp.py led 0 "#00ff00"` | 只点亮第 N 颗灯（查坏灯用） |
+| `lamp.py effect Breathing --color "#3a86ff"` | 设备自带效果（Wave/Breathing/Static/…） |
+| `lamp.py ramp --seconds 6` | 亮度缓升缓降，检验硬件渐变是否平滑 |
+| `lamp.py watch --delay 3` | 依次演示所有状态 |
+| `lamp.py off` / `lamp.py restore` | 关灯 / 恢复原始灯效 |
+
+全局选项：`--via-mcp`（改走 MCP 服务器，验证完整协议链路）、`--device NAME`（选设备）、
+`--port N`（指定端口）、`--json`（机器可读输出）。
+
 ## 状态配色
 
 ![状态与进度/额度条渲染输出](docs/states.png)
@@ -184,7 +213,7 @@ openrgb-mcp/
 ├── CONTRACT.md            # 协议与模块契约（开发文档）
 ├── LICENSE                # GPL-3.0
 ├── docs/                  # README 用图（banner.png / states.png）
-├── tools/                 # make_state_chart.py：用真实渲染器生成状态图
+├── tools/                 # lamp.py（手动控制 CLI）、demo_states.py、make_state_chart.py
 ├── install/               # DSH 注册配置示例（mcp-config.example.yml）
 └── tests/
     ├── test_renderer.py     # 渲染器单测
