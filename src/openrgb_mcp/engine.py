@@ -66,6 +66,9 @@ class StatusEngine:
         self.quota: Optional[Tuple[int, int]] = None
         self.custom_color: Optional[str] = None
         self.state_since = time.time()
+        # True while the controller animates on its own (hardware effect);
+        # in that mode we must not write per-LED frames at all.
+        self.hardware_mode = False
 
         self._last_frame: Optional[List[Tuple[int, int, int]]] = None
         self._lock = threading.RLock()
@@ -173,6 +176,9 @@ class StatusEngine:
 
     # -- animation thread ----------------------------------------------
     def _needs_animation(self) -> bool:
+        if self.hardware_mode:
+            # the controller animates by itself - writing frames would flicker
+            return False
         if not self.config.get("animate", True):
             return False
         effect = (self.palette.get(self.state) or {}).get("effect", "solid")
@@ -260,6 +266,7 @@ class StatusEngine:
         self.client.apply_hardware_effect(device, mode, color=color, brightness=brightness)
         self.device = self.client.devices[device.index]
         self._last_frame = None
+        self.hardware_mode = True
         return True
 
     def set_state(
@@ -284,9 +291,12 @@ class StatusEngine:
             # hardware effect first: the controller does the animation, so the
             # lamp never strobs and the USB link stays idle
             if self._apply_hardware_state(normalized):
-                self.stop_animation()
+                # keep the timer thread alive (it handles done -> idle) but it
+                # must not write frames while the hardware animates
+                self.start_animation()
                 return self.describe()
             # fallback: software animation (per-LED writes)
+            self.hardware_mode = False
             self.ensure_per_led()
             self._render_once()
             self.start_animation()
@@ -298,6 +308,7 @@ class StatusEngine:
             device = self.ensure_connected()
             device = self.client.ensure_per_led_mode(device)
             self.device = device
+            self.hardware_mode = False
             return device
 
     def set_progress(
@@ -456,6 +467,7 @@ class StatusEngine:
                 "animation_running": bool(
                     self._thread is not None and self._thread.is_alive()
                 ),
+                "render_mode": "hardware" if self.hardware_mode else "per_led",
                 "animate": bool(self.config.get("animate", True)),
                 "fps": int(self.config.get("fps") or 12),
                 "brightness": float(self.config.get("brightness") or 1.0),

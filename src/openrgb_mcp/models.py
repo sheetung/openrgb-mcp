@@ -70,6 +70,11 @@ class StatusResult(BaseModel):
     port: Optional[int]
     protocol_version: Optional[int]
     animation_running: bool
+    render_mode: str = Field(
+        default="per_led",
+        description="'hardware' = the controller animates on its own, "
+        "'per_led' = colours are written LED by LED",
+    )
     animate: bool
     fps: int
     brightness: float
