@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": null,
+  "device": null,
+  "fps": 12,
+  "brightness": 1.0,
+  "animate": true,
+  "done_hold_seconds": 8,
+  "palette": {}
+}

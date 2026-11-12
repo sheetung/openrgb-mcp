@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# 运行期状态（端口/设备/原始灯效缓存）
+.state.json
+
+# 本机 DSH profile 备份（含私人配置，不入库）
+backup/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
