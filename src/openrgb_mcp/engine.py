@@ -234,16 +234,33 @@ class StatusEngine:
     # hardware effect preference per state: the controller animates on its
     # own, which is smooth and does not flood the USB link with LED writes
     _HARDWARE_MODES = {
-        "thinking": ("Breathing", "Breathe", "Fade"),
-        "working": ("Breathing", "Breathe", "Fade"),
-        "waiting": ("Breathing", "Breathe", "Fade"),
-        "error": ("Breathing", "Breathe", "Fade"),
+        "thinking": ("Breathing", "Breathe"),
+        "working": ("Breathing", "Breathe"),
+        "waiting": ("Breathing", "Breathe"),
+        "error": ("Breathing", "Breathe"),
         "done": ("Static", "Solid"),
         "idle": ("Static", "Solid"),
         "off": ("Off", "Dark"),
     }
 
-    def _apply_hardware_state(self, state: str) -> bool:
+    # effect speed per state (0 = calm .. 255 = fast on most controllers)
+    _HARDWARE_SPEED = {
+        "thinking": 40,
+        "working": 110,
+        "waiting": 35,
+        "error": 120,
+        "done": 0,
+        "idle": 0,
+        "off": 0,
+    }
+
+    def _apply_hardware_state(
+        self,
+        state: str,
+        color: Optional[RGBColor] = None,
+        brightness: Optional[int] = None,
+        speed: Optional[int] = None,
+    ) -> bool:
         """Hand the LEDs to the controller's own effect. True when done."""
         device = self.device
         if device is None or self.client is None:
@@ -252,18 +269,21 @@ class StatusEngine:
         if mode is None:
             return False
         spec = self.palette.get(state) or {}
-        color = None
-        try:
-            color = RGBColor.from_hex(spec.get("color", "#ffffff"))
-        except ValueError:
-            color = None
-        brightness = None
-        if mode.flags & 0x10:  # HAS_BRIGHTNESS
-            brightness = int(round(float(spec.get("brightness", 1.0)) * 255))
+        if color is None:
+            try:
+                color = RGBColor.from_hex(spec.get("color", "#ffffff"))
+            except ValueError:
+                color = RGBColor(255, 255, 255)
+        if brightness is None and mode.flags & 0x10:  # HAS_BRIGHTNESS
+            brightness = self._level(float(spec.get("brightness", 1.0)))
+        if speed is None:
+            speed = self._HARDWARE_SPEED.get(state)
         if state == "off":
             color = None
             brightness = 0
-        self.client.apply_hardware_effect(device, mode, color=color, brightness=brightness)
+        self.client.apply_hardware_effect(
+            device, mode, color=color, brightness=brightness, speed=speed
+        )
         self.device = self.client.devices[device.index]
         self._last_frame = None
         self.hardware_mode = True
@@ -311,6 +331,49 @@ class StatusEngine:
             self.hardware_mode = False
             return device
 
+    # -- global (whole-strip) control ----------------------------------
+    def _global(self) -> bool:
+        return str(self.config.get("control", "global")).lower() != "per_led"
+
+    def _max_level(self) -> int:
+        """Hard ceiling for the brightness we ever request (default 70%)."""
+        cap = self.config.get("max_brightness", 0.7)
+        try:
+            cap = float(cap)
+        except (TypeError, ValueError):
+            cap = 0.7
+        cap = max(0.05, min(1.0, cap))
+        return max(4, int(round(cap * 255)))
+
+    def _level(self, fraction: float) -> int:
+        """Map a 0..1 fraction onto the capped brightness range."""
+        fraction = max(0.0, min(1.0, float(fraction)))
+        brightness = float(self.config.get("brightness") or 1.0)
+        level = int(round(fraction * brightness * self._max_level()))
+        return max(4, min(self._max_level(), level))
+
+    def _apply_global(
+        self,
+        mode_names: Sequence[str],
+        color: RGBColor,
+        brightness: int,
+        speed: Optional[int] = None,
+    ) -> bool:
+        """Drive the whole strip through one hardware effect."""
+        device = self.device
+        if device is None or self.client is None:
+            return False
+        mode = self.client.find_mode(device, mode_names)
+        if mode is None:
+            return False
+        self.client.apply_hardware_effect(
+            device, mode, color=color, brightness=brightness, speed=speed
+        )
+        self.device = self.client.devices[device.index]
+        self._last_frame = None
+        self.hardware_mode = True
+        return True
+
     def set_progress(
         self,
         percent: Optional[float] = None,
@@ -337,9 +400,26 @@ class StatusEngine:
             self.progress_color = color
             self.detail = detail
             self.state_since = time.time()
-            self.ensure_per_led()
-            self.stop_animation()
-            self._render_once()
+            self.ensure_connected()
+            if self._global():
+                # whole strip: brightness = progress, colour = state colour
+                spec = self.palette.get(self.state) or {}
+                rgb = RGBColor.from_hex(color) if color else RGBColor.from_hex(
+                    spec.get("color", "#00d4ff")
+                )
+                level = self._level(value / 100.0)
+                self.stop_animation()
+                if not self._apply_global(
+                    ("Breathing", "Breathe", "Static", "Solid"),
+                    rgb, level, speed=60,
+                ):
+                    # device has no usable hardware effect - fall back to LEDs
+                    self.ensure_per_led()
+                    self._render_once()
+            else:
+                self.ensure_per_led()
+                self.stop_animation()
+                self._render_once()
             result = self.describe()
             result["percent"] = round(value, 1)
             result["filled_leds"] = self._filled_leds(self.progress)
@@ -355,6 +435,7 @@ class StatusEngine:
         if total <= 0:
             raise ValueError("total must be > 0")
         remaining = max(0.0, min(float(total), float(remaining)))
+        ratio = remaining / total
         with self._lock:
             self._reset_view()
             if self.state in ("idle", "off"):
@@ -362,14 +443,31 @@ class StatusEngine:
             self.quota = (int(round(remaining)), int(round(total)))
             self.detail = detail
             self.state_since = time.time()
-            self.ensure_per_led()
-            self.stop_animation()
-            self._render_once()
+            self.ensure_connected()
+            if self._global():
+                # whole strip: brightness = remaining, colour by tier
+                rgb = (
+                    RGBColor.from_hex("#2ecc71") if ratio > 0.5
+                    else RGBColor.from_hex("#ffb703") if ratio > 0.2
+                    else RGBColor.from_hex("#ff4d4f")
+                )
+                level = self._level(ratio)
+                self.stop_animation()
+                if not self._apply_global(
+                    ("Breathing", "Breathe", "Static", "Solid"),
+                    rgb, level, speed=60,
+                ):
+                    self.ensure_per_led()
+                    self._render_once()
+            else:
+                self.ensure_per_led()
+                self.stop_animation()
+                self._render_once()
             result = self.describe()
             result["remaining"] = remaining
             result["total"] = total
-            result["ratio"] = round(remaining / total, 3)
-            result["filled_leds"] = self._filled_leds(remaining / total)
+            result["ratio"] = round(ratio, 3)
+            result["filled_leds"] = self._filled_leds(ratio)
             return result
 
     def set_color(self, color: str, brightness: Optional[float] = None) -> Dict[str, Any]:
@@ -381,12 +479,26 @@ class StatusEngine:
             if brightness is not None:
                 self.config["brightness"] = max(0.0, min(1.0, float(brightness)))
             self.state_since = time.time()
-            self.ensure_per_led()
-            self.stop_animation()
-            self._render_once()
+            self.ensure_connected()
+            if self._global():
+                level = self._level(float(self.config.get("brightness") or 1.0))
+                self.stop_animation()
+                if not self._apply_global(("Static", "Solid"), parsed, level):
+                    self.ensure_per_led()
+                    self._render_once()
+            else:
+                self.ensure_per_led()
+                self.stop_animation()
+                self._render_once()
             return self.describe()
 
     def set_leds(self, colors: List[str]) -> Dict[str, Any]:
+        if self._global():
+            raise ValueError(
+                "该设备按整条灯带控制（风扇灯珠位置无法对应），逐灯珠不可用；"
+                "请改用 set_color / set_progress / set_quota，"
+                "或在 config.json 中把 control 设为 per_led"
+            )
         parsed = [RGBColor.from_hex(c) for c in colors]
         with self._lock:
             device = self.ensure_per_led()
@@ -468,6 +580,7 @@ class StatusEngine:
                     self._thread is not None and self._thread.is_alive()
                 ),
                 "render_mode": "hardware" if self.hardware_mode else "per_led",
+                "control": self.config.get("control", "global"),
                 "animate": bool(self.config.get("animate", True)),
                 "fps": int(self.config.get("fps") or 12),
                 "brightness": float(self.config.get("brightness") or 1.0),

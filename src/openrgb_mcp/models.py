@@ -75,6 +75,11 @@ class StatusResult(BaseModel):
         description="'hardware' = the controller animates on its own, "
         "'per_led' = colours are written LED by LED",
     )
+    control: str = Field(
+        default="global",
+        description="'global' = the whole strip is controlled as one unit, "
+        "'per_led' = every LED is written individually",
+    )
     animate: bool
     fps: int
     brightness: float

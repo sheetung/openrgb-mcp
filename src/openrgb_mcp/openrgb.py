@@ -173,8 +173,13 @@ class Mode:
         """True when the mode takes its colour from the mode payload."""
         return self.color_mode == 2
 
-    def with_color(self, color: RGBColor, brightness: Optional[int] = None) -> bytes:
-        """Return the UPDATEMODE payload with a new colour (and brightness)."""
+    def with_color(
+        self,
+        color: RGBColor,
+        brightness: Optional[int] = None,
+        speed: Optional[int] = None,
+    ) -> bytes:
+        """Return the UPDATEMODE payload with a new colour/brightness/speed."""
         body = bytearray(self.raw)
         if self.num_colors and self.colors_offset >= 0:
             start = self.colors_offset
@@ -183,6 +188,9 @@ class Mode:
         if brightness is not None and self.brightness_offset >= 0:
             start = self.brightness_offset
             body[start:start + 4] = struct.pack("<I", max(0, min(255, int(brightness))))
+        if speed is not None and self.speed_offset >= 0:
+            start = self.speed_offset
+            body[start:start + 4] = struct.pack("<I", max(0, min(255, int(speed))))
         return struct.pack("<I", len(body) + 4) + bytes(body)
 
     @property
@@ -749,6 +757,7 @@ class OpenRGBClient:
         mode: Mode,
         color: Optional[RGBColor] = None,
         brightness: Optional[int] = None,
+        speed: Optional[int] = None,
     ) -> Device:
         """Let the controller run one of its own effects.
 
@@ -758,7 +767,11 @@ class OpenRGBClient:
         with self._lock:
             payload = mode.packed
             if color is not None and mode.num_colors:
-                payload = mode.with_color(color, brightness=brightness)
+                payload = mode.with_color(color, brightness=brightness, speed=speed)
+            elif brightness is not None or speed is not None:
+                payload = mode.with_color(
+                    RGBColor(0, 0, 0), brightness=brightness, speed=speed
+                ) if mode.num_colors else mode.packed
             self._send(device.index, P_UPDATE_MODE, payload)
             return self._refresh_one(device.index)
 

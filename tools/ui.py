@@ -33,6 +33,7 @@ for path in (os.path.join(ROOT, "src"), ROOT, HERE):
         sys.path.insert(0, path)
 
 from openrgb_mcp import renderer  # noqa: E402
+from openrgb_mcp.config import load_config  # noqa: E402
 from openrgb_mcp.engine import STATES  # noqa: E402
 
 SERVER = os.path.join(ROOT, "server.py")
@@ -194,20 +195,17 @@ function sendEffect() { post('effect', {effect: document.getElementById('effect'
 document.getElementById('progress').oninput = e =>
   document.getElementById('progressValue').textContent = e.target.value;
 
-/* ---- 亮度缓升缓降：逐灯写入，走 MCP 的 set_leds ---- */
+/* ---- 亮度缓升缓降：走 MCP 的 set_progress（整体控制 = 整体亮度） ---- */
 function ramp(seconds) {
   stopRamp();
-  const steps = Math.round(seconds * 12), start = Date.now();
+  const steps = Math.round(seconds * 4), start = Date.now();
   rampTimer = setInterval(() => {
     const phase = (Date.now() - start) / (seconds * 1000);
     const level = 0.05 + 0.95 * (0.5 - 0.5 * Math.cos(phase * 2 * Math.PI));
-    const leds = lastFrame ? lastFrame.led_count : 200;
-    const r = Math.round(58 * level), g = Math.round(134 * level), b = Math.round(255 * level);
-    const colors = new Array(leds).fill('#' + [r,g,b].map(v =>
-      v.toString(16).padStart(2,'0')).join(''));
     fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({action:'leds', colors})}).catch(()=>{});
-  }, 80);
+      body: JSON.stringify({action:'progress', percent: Math.round(level * 100)})})
+      .catch(()=>{});
+  }, 250);
 }
 function stopRamp() { if (rampTimer) { clearInterval(rampTimer); rampTimer = null; } }
 
@@ -364,8 +362,16 @@ class LampUI:
         if action == "color":
             return self.call("set_color", {"color": payload["color"]})
         if action == "gradient":
+            if self.control_mode() != "per_led":
+                raise ValueError(
+                    "当前为整体控制模式（风扇灯珠位置无法对应），渐变不可用"
+                )
             return self.call("set_leds", {"colors": self._gradient(payload["colors"])})
         if action == "leds":
+            if self.control_mode() != "per_led":
+                raise ValueError(
+                    "当前为整体控制模式，逐灯珠不可用；请用「单色」或「进度条」"
+                )
             return self.call("set_leds", {"colors": payload["colors"]})
         if action == "effect":
             return self.call("set_effect", {"effect": payload["effect"]})
@@ -397,25 +403,58 @@ class LampUI:
             )
         return out
 
+    def control_mode(self) -> str:
+        return self.call("status", {}).get("control", "global")
+
     def frame(self) -> Dict[str, Any]:
         status = self.call("status", {})
         devices = self.call("list_devices", {})
         state = status.get("state", "idle")
-        spec = renderer.DEFAULT_PALETTE.get(state) or renderer.DEFAULT_PALETTE["idle"]
-        colors = renderer.render(
-            state,
-            devices.get("led_count", 60),
-            palette=None,
-            progress=status.get("progress"),
-            quota=tuple(status["quota"]) if status.get("quota") else None,
-        )
+        control = status.get("control", "global")
+        led_count = devices.get("led_count", 60)
+        if control == "global":
+            # the whole strip shows one colour; progress/quota = brightness
+            spec = renderer.DEFAULT_PALETTE.get(state) or renderer.DEFAULT_PALETTE["idle"]
+            color = renderer.parse_hex_color(spec.get("color", "#ffffff")) or (255, 255, 255)
+            level = float(spec.get("brightness", 1.0))
+            if status.get("progress") is not None:
+                level = float(status["progress"])
+                color = renderer.parse_hex_color(
+                    (renderer.DEFAULT_PALETTE.get(status.get("state") or state, {})
+                     or {}).get("color", "#00d4ff")) or color
+            elif status.get("quota"):
+                remaining, total = status["quota"]
+                ratio = (remaining / total) if total else 0.0
+                level = ratio
+                color = (
+                    renderer.parse_hex_color("#2ecc71") if ratio > 0.5
+                    else renderer.parse_hex_color("#ffb703") if ratio > 0.2
+                    else renderer.parse_hex_color("#ff4d4f")
+                ) or color
+            cap = 0.7
+            try:
+                cap = float(load_config().get("max_brightness", 0.7) or 0.7)
+            except Exception:  # noqa: BLE001
+                pass
+            level = max(0.0, min(1.0, level)) * cap
+            rgb = tuple(max(0, min(255, round(c * level))) for c in color)
+            colors = [rgb] * led_count
+        else:
+            colors = renderer.render(
+                state,
+                led_count,
+                palette=None,
+                progress=status.get("progress"),
+                quota=tuple(status["quota"]) if status.get("quota") else None,
+            )
         return {
             "state": state,
             "device": status.get("device") or devices.get("selected"),
-            "led_count": devices.get("led_count", 60),
+            "led_count": led_count,
             "port": status.get("port"),
             "active_mode": status.get("active_mode"),
             "render_mode": status.get("render_mode", "per_led"),
+            "control": control,
             "zones": status.get("zones", []),
             "progress": status.get("progress"),
             "quota": status.get("quota"),

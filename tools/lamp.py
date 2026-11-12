@@ -59,6 +59,21 @@ class DirectBackend:
     def __init__(self, device: Optional[str] = None, port: Optional[int] = None):
         self.client = OpenRGBClient(port=port, name="openrgb-mcp-cli").connect()
         self.device = self.client.find_device(device)
+        self.control = "global"
+        try:
+            from openrgb_mcp.config import load_config
+
+            self.control = str(load_config().get("control", "global")).lower()
+        except Exception:  # noqa: BLE001 - defaults are fine
+            pass
+
+    def _require_per_led(self) -> None:
+        if self.control != "per_led":
+            raise ValueError(
+                "当前为整体控制模式（风扇的灯珠位置无法对应），逐灯珠不可用；"
+                "请改用 color / progress / quota，"
+                "或在 config.json 里把 control 设为 per_led"
+            )
 
     def devices(self) -> dict:
         return {
@@ -91,8 +106,18 @@ class DirectBackend:
         return {"state": state, "mode": "Direct", "color": colors[0].to_hex()}
 
     def progress(self, done: float, total: float, color: Optional[str]) -> dict:
-        self.device = self.client.ensure_per_led_mode(self.device)
         frac = max(0.0, min(1.0, done / total)) if total else 0.0
+        if self.control != "per_led":
+            # global control: the whole strip dims/brightens with the progress
+            mode = self.client.find_mode(self.device, ("Breathing", "Breathe", "Static"))
+            rgb = RGBColor.from_hex(color) if color else RGBColor(0, 212, 255)
+            level = max(4, int(round(frac * self._max_level())))
+            self.device = self.client.apply_hardware_effect(
+                self.device, mode, color=rgb, brightness=level, speed=60
+            )
+            return {"percent": round(frac * 100, 1), "brightness": level,
+                    "max_brightness": self._max_level(), "mode": mode.name}
+        self.device = self.client.ensure_per_led_mode(self.device)
         filled = round(frac * self.device.led_count)
         rgb = RGBColor.from_hex(color) if color else RGBColor(0, 212, 255)
         colors = [rgb] * filled + [RGBColor.black()] * (self.device.led_count - filled)
@@ -100,18 +125,43 @@ class DirectBackend:
         return {"percent": round(frac * 100, 1), "filled_leds": filled,
                 "led_count": self.device.led_count}
 
+    def _max_level(self) -> int:
+        try:
+            from openrgb_mcp.config import load_config
+
+            cap = float(load_config().get("max_brightness", 0.7))
+        except Exception:  # noqa: BLE001
+            cap = 0.7
+        return max(4, min(255, int(round(max(0.05, min(1.0, cap)) * 255))))
+
     def quota(self, remaining: float, total: float) -> dict:
+        ratio = max(0.0, min(1.0, remaining / total)) if total else 0.0
+        if self.control != "per_led":
+            color = "#2ecc71" if ratio > 0.5 else "#ffb703" if ratio > 0.2 else "#ff4d4f"
+            info = self.progress(remaining, total, color)
+            info["ratio"] = round(ratio, 3)
+            return info
         return self.progress(remaining, total, None)
 
     def color(self, hex_color: str, brightness: Optional[float]) -> dict:
-        self.device = self.client.ensure_per_led_mode(self.device)
         rgb = RGBColor.from_hex(hex_color)
+        if self.control != "per_led":
+            mode = self.client.find_mode(self.device, ("Static", "Solid"))
+            level = self._max_level() if brightness is None else max(
+                4, int(round(brightness * self._max_level()))
+            )
+            self.device = self.client.apply_hardware_effect(
+                self.device, mode, color=rgb, brightness=level
+            )
+            return {"color": rgb.to_hex(), "brightness": level, "mode": mode.name}
+        self.device = self.client.ensure_per_led_mode(self.device)
         if brightness is not None:
             rgb = rgb.scaled(brightness)
         self.client.set_device_colors(self.device, [rgb] * self.device.led_count)
         return {"color": rgb.to_hex(), "led_count": self.device.led_count}
 
     def leds(self, colors: Sequence[str]) -> dict:
+        self._require_per_led()
         self.device = self.client.ensure_per_led_mode(self.device)
         if len(colors) != self.device.led_count:
             raise ValueError(
@@ -122,6 +172,7 @@ class DirectBackend:
         return {"led_count": len(rgbs)}
 
     def led(self, index: int, hex_color: str) -> dict:
+        self._require_per_led()
         self.device = self.client.ensure_per_led_mode(self.device)
         colors = list(self.device.colors) or [RGBColor.black()] * self.device.led_count
         colors[index] = RGBColor.from_hex(hex_color)
@@ -169,15 +220,23 @@ class DirectBackend:
 
     def ramp(self, seconds: float) -> dict:
         """Slow brightness sweep - shows whether the hardware fades smoothly."""
-        self.device = self.client.ensure_per_led_mode(self.device)
-        steps = max(2, int(seconds * 8))
+        import math
+
+        mode = self.client.find_mode(self.device, ("Breathing", "Breathe", "Static"))
+        if mode is None:
+            raise ValueError("设备没有可用的呼吸/静态效果")
+        color = RGBColor.from_hex("#3a86ff")
+        steps = max(2, int(seconds * 4))
         for index in range(steps):
             phase = index / (steps - 1)
-            level = 0.05 + 0.95 * (0.5 - 0.5 * __import__("math").cos(phase * 2 * 3.14159))
-            rgb = RGBColor.from_hex("#3a86ff").scaled(level)
-            self.client.set_device_colors(self.device, [rgb] * self.device.led_count)
+            level = 0.05 + 0.95 * (0.5 - 0.5 * math.cos(phase * 2 * math.pi))
+            self.device = self.client.apply_hardware_effect(
+                self.device, mode, color=color,
+                brightness=max(4, int(round(level * self._max_level()))), speed=60,
+            )
             time.sleep(seconds / steps)
-        return {"ramp_seconds": seconds, "steps": steps}
+        return {"ramp_seconds": seconds, "steps": steps,
+                "max_brightness": self._max_level()}
 
     def watch(self, delay: float) -> dict:
         for state in STATES:

@@ -6,5 +6,7 @@
   "brightness": 1.0,
   "animate": true,
   "done_hold_seconds": 8,
+  "control": "global",
+  "max_brightness": 0.7,
   "palette": {}
 }

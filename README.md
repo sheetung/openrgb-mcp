@@ -80,10 +80,10 @@ openrgb-mcp --transport streamable-http --port 8765   # HTTP
 | `list_devices` | — | 设备、zone、模式、灯珠数量（进度条总格数） |
 | `status` | — | 当前 state / 灯珠数 / 端口 / 动画是否在跑 / 最近错误 |
 | `set_state` | `state`：`idle` `thinking` `working` `waiting` `done` `error` `off`；`detail` 可选说明；`animate` 可选 | 切状态（颜色 + 动画见下表） |
-| `set_progress` | `percent` 0–100，或 `done`+`total`；`color`、`state`、`detail` 可选 | 进度条：已完成灯珠点亮，其余暗色 |
-| `set_quota` | `remaining`、`total`；`detail` 可选 | 剩余额度条，按比例点亮，颜色随剩余比例变（>50% 绿、20–50% 琥珀、≤20% 红） |
-| `set_color` | `color` `#RRGGBB`；`brightness` 0–1 可选 | 全部灯珠单色 |
-| `set_leds` | `colors`：`#RRGGBB` 数组，长度必须 = 设备灯珠总数 N | 逐灯珠自定义（渐变/图案） |
+| `set_progress` | `percent` 0–100，或 `done`+`total`；`color`、`state`、`detail` 可选 | 进度 = 整体亮度（也可在 per_led 模式下点亮前 N 颗） |
+| `set_quota` | `remaining`、`total`；`detail` 可选 | 剩余额度 = 整体亮度，颜色随剩余比例变（>50% 绿、20–50% 琥珀、≤20% 红） |
+| `set_color` | `color` `#RRGGBB`；`brightness` 0–1 可选 | 整条灯带单色 |
+| `set_leds` | `colors`：`#RRGGBB` 数组，长度必须 = 设备灯珠总数 N | 逐灯珠自定义（仅 `control: per_led` 可用） |
 | `set_effect` | `effect`：设备自带的模式名（如 `Static`、`Breathing`、`Wave` 等，以 `list_devices` 返回为准）；`color` 可选 | 调 OpenRGB 硬件模式（会停掉状态动画） |
 | `restore` | — | 恢复首次接管前的原始灯效，停止动画 |
 
@@ -154,11 +154,37 @@ cd openrgb-mcp
 全局选项：`--via-mcp`（改走 MCP 服务器，验证完整协议链路）、`--device NAME`（选设备）、
 `--port N`（指定端口）、`--json`（机器可读输出）。
 
+## 控制方式：整体控制（默认）
+
+灯接的是**机箱散热风扇**（ARGB 排针），灯珠位置无法对应到具体风扇，所以默认按**整条灯带一个颜色**控制：
+
+| 语义 | 实现 |
+|---|---|
+| 状态 | 颜色 + 控制器自带效果（`Breathing` / `Static` / `Off`） |
+| 进度 | **整体亮度** = 进度百分比（上限 70%，见 `max_brightness`） |
+| 剩余额度 | 整体亮度 = 剩余比例，颜色分三档（>50% 绿 / 20–50% 琥珀 / ≤20% 红） |
+| 单色 | 整体颜色（`set_color`） |
+
+颜色、亮度、速度全部交给控制器执行，**不逐帧重写灯珠**，所以不会闪、也不会有 USB 写入抖动。
+若你的设备确实是可寻址灯带（每颗灯珠可控），把 `config.json` 里的 `control` 改成 `per_led`，
+进度/额度就会变成经典的"点亮前 N 颗"灯带。
+
+```json
+{
+  "control": "global",
+  "max_brightness": 0.7,
+  "brightness": 1.0
+}
+```
+
+> ⚠️ **必须关闭厂商灯控软件**（本机是 JGinYueRGB）。它也是一个 OpenRGB SDK 客户端，
+> 会持续往设备写自己的颜色，导致我们的设置被覆盖、灯光闪烁。退出它之后一切正常。
+
 ## 状态配色
 
 ![状态与进度/额度条渲染输出](docs/states.png)
 
-> 上图由 `tools/make_state_chart.py` 直接调用 `renderer.render()` 生成——每一颗灯珠的颜色都来自真实代码路径，不是手绘示意图。
+> 上图由 `tools/make_state_chart.py` 调用真实的调色板与亮度映射生成——颜色和亮度就是实机会用的值。
 
 **状态色由控制器自己跑效果**（`Breathing` / `Static` / `Off`），不是逐帧重写 200 颗灯珠：
 灯光由硬件平滑调光，USB 链路零写入，因此**完全不闪、不频闪**。只有进度条 / 额度条 / 自定义图案
@@ -198,10 +224,10 @@ cd openrgb-mcp
 
 ## 进度条 / 额度条怎么算
 
-- 总格数 = 设备灯珠数（运行时从设备读取，可用 `list_devices` 查询）。
-- 点亮格数 `filled = round(clamp(frac, 0, 1) × N)`，点亮部分用状态色（或 `color`/额度档位色），其余为 `#0a0a0f`。
-- 额度条三档：`frac > 0.5` 绿 `#2ecc71`，`0.2 < frac ≤ 0.5` 琥珀 `#ffb703`，`frac ≤ 0.2` 红 `#ff4d4f`。
-- 额度条优先于进度条；进度/额度条为静态画面，动画只用于状态色。
+- **整体控制（默认）**：亮度 = 比例 × `max_brightness`（默认上限 70% = 178/255），
+  颜色按额度三档；不需要知道灯珠数量。
+- **per_led 模式**：总格数 = 设备灯珠数，点亮格数 `filled = round(clamp(frac,0,1) × N)`，
+  未点亮格用 `#0a0a0f`。
 
 ## 自动状态同步
 

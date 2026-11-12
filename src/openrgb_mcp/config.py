@@ -23,6 +23,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "brightness": 1.0,
     "animate": True,
     "done_hold_seconds": 8,
+    # "global"  = whole strip as one colour/brightness (fans, RGB strips)
+    # "per_led" = write every LED individually (addressable strips only)
+    "control": "global",
+    # hard ceiling for the brightness we ever ask the hardware for
+    "max_brightness": 0.7,
     "palette": {},
 }
 

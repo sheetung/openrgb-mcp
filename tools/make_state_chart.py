@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Render docs/states.png straight from the real renderer.
+"""Render docs/states.png from the real palette and brightness mapping.
 
-Every LED pixel in the chart comes from ``renderer.render()`` - the same code
-path the MCP server drives the hardware with - so the picture cannot drift from
-the implementation.
+The chart shows **global control** (the way the lamp is actually driven on
+this machine): one colour for the whole strip, and progress / quota mapped
+onto the strip's brightness.
 
 Usage:  python tools/make_state_chart.py [output.png]
 """
@@ -22,8 +22,9 @@ for path in (os.path.join(ROOT, "src"), ROOT, HERE):
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont  # noqa: E402
 
 from openrgb_mcp import renderer  # noqa: E402
+from openrgb_mcp.config import load_config  # noqa: E402
 
-W, H = 1680, 880
+W, H = 1180, 960
 BG = (11, 13, 18)
 TEXT = (226, 232, 240)
 MUTED = (132, 142, 160)
@@ -55,88 +56,91 @@ def main() -> int:
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "docs", "states.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)
 
-    title_f = _font(FONT_CANDIDATES, 40)
-    sub_f = _font(FONT_CANDIDATES, 21)
-    label_f = _font(FONT_CANDIDATES, 24)
-    small_f = _font(FONT_CANDIDATES, 18)
-    mono_f = _font(MONO_CANDIDATES, 19)
+    config = load_config()
+    cap = float(config.get("max_brightness", 0.7) or 0.7)
+    cap = max(0.05, min(1.0, cap))
+
+    title_f = _font(FONT_CANDIDATES, 38)
+    sub_f = _font(FONT_CANDIDATES, 20)
+    label_f = _font(FONT_CANDIDATES, 23)
+    small_f = _font(FONT_CANDIDATES, 17)
+    mono_f = _font(MONO_CANDIDATES, 18)
 
     sharp = Image.new("RGB", (W, H), BG)
     glow = Image.new("RGB", (W, H), (0, 0, 0))
     draw = ImageDraw.Draw(sharp)
     gdraw = ImageDraw.Draw(glow)
 
-    draw.text((56, 44), "OpenRGB 状态灯 · 真实渲染输出", font=title_f, fill=TEXT)
+    draw.text((52, 40), "OpenRGB 状态灯 · 整体控制", font=title_f, fill=TEXT)
     draw.text(
-        (56, 98),
-        "每颗灯珠的颜色直接来自 renderer.render()，与 MCP server 驱动硬件的代码路径一致",
+        (52, 92),
+        f"整条灯带一个颜色，进度/额度用整体亮度表示（亮度上限 {int(cap * 100)}%）",
         font=sub_f,
         fill=MUTED,
     )
-    draw.line([(56, 140), (W - 56, 140)], fill=LINE, width=2)
+    draw.line([(52, 130), (W - 52, 130)], fill=LINE, width=2)
 
     rows = [
-        ("thinking", "思考中", "蓝 · 呼吸 1.2s"),
-        ("working", "执行中", "青 · 呼吸 2.0s"),
-        ("waiting", "等待用户输入", "琥珀 · 脉冲 1.5s"),
-        ("done", "完成", "绿 · 常亮"),
-        ("error", "出错", "红 · 闪烁 0.5s"),
         ("idle", "空闲", "暗蓝 · 呼吸 4.0s"),
+        ("thinking", "思考中", "蓝 · 呼吸 2.4s"),
+        ("working", "执行中", "青 · 呼吸 3.2s"),
+        ("waiting", "等待用户输入", "琥珀 · 渐变 3.6s"),
+        ("done", "完成", "绿 · 常亮"),
+        ("error", "出错", "红 · 渐变 2.8s"),
         ("off", "关闭", "全黑"),
     ]
 
-    led_count = 24
-    x0 = 306
-    pitch = 27
-    radius = 9
-    y = 184
+    x0 = 250
+    bar_w = 700
+    y = 168
 
-    def strip(colors, cy):
-        for i, rgb in enumerate(colors):
-            cx = x0 + i * pitch
-            draw.ellipse(
-                [cx - radius, cy - radius, cx + radius, cy + radius],
-                fill=rgb, outline=RIM, width=1,
-            )
-            if max(rgb) > 8:
-                gr = radius + 16
-                gdraw.ellipse(
-                    [cx - gr, cy - gr, cx + gr, cy + gr], fill=rgb
-                )
+    def bar(color, level, label=""):
+        """One bar = the whole strip at the given brightness."""
+        level = max(0.0, min(1.0, level))
+        rgb = tuple(max(0, min(255, round(c * level))) for c in color)
+        draw.rectangle([x0, y, x0 + bar_w, y + 26], fill=rgb, outline=RIM, width=1)
+        if max(rgb) > 8:
+            gdraw.rectangle([x0 - 6, y - 6, x0 + bar_w + 6, y + 32], fill=rgb)
+        if label:
+            # CJK-capable font: the mono font has no Chinese glyphs
+            draw.text((x0 + bar_w + 18, y + 4), label, font=small_f, fill=MUTED)
 
     for state, cn, desc in rows:
         spec = renderer.DEFAULT_PALETTE[state]
-        period = float(spec.get("period") or 0)
-        tick = (period / 4.0) if period > 0 else 0.0   # brightest frame
-        colors = renderer.render(state, led_count, tick=tick)
-        draw.text((56, y - 6), cn, font=label_f, fill=TEXT)
-        draw.text((56, y + 28), desc, font=small_f, fill=MUTED)
-        draw.text((x0, y + 30), spec["color"], font=mono_f, fill=MUTED)
-        strip(colors, y + 12)
-        y += 66
+        color = renderer.parse_hex_color(spec["color"]) or (0, 0, 0)
+        level = float(spec.get("brightness", 1.0)) * cap
+        if state == "off":
+            level = 0.0
+        draw.text((52, y - 2), cn, font=label_f, fill=TEXT)
+        draw.text((52, y + 30), desc, font=small_f, fill=MUTED)
+        bar(color, level, f"{spec['color']}  {int(round(level * 255))}/255")
+        y += 62
 
-    y += 14
-    draw.line([(56, y - 14), (W - 56, y - 14)], fill=LINE, width=2)
-    y += 6
+    y += 10
+    draw.line([(52, y - 12), (W - 52, y - 12)], fill=LINE, width=2)
+    y += 4
 
     bars = [
-        ("进度条 60%", dict(progress=0.6), "已完成 60% 的灯珠点亮，其余熄灭"),
-        ("额度条 30/100", dict(quota=(30, 100)), ">50% 绿 / 20-50% 琥珀 / <20% 红"),
+        ("进度条 20%", 0.20, "#00d4ff", "亮度 20% · 51/255"),
+        ("进度条 60%", 0.60, "#00d4ff", "亮度 60% · 107/255"),
+        ("进度条 100%", 1.00, "#00d4ff", f"亮度 {int(cap * 100)}% · {int(cap * 255)}/255（上限）"),
+        ("额度条 30/100", 0.30, "#ffb703", "琥珀色 · 亮度 30%"),
+        ("额度条 80/100", 0.80, "#2ecc71", "绿色 · 亮度 80%"),
     ]
-    for cn, kwargs, desc in bars:
-        draw.text((56, y - 6), cn, font=label_f, fill=TEXT)
-        draw.text((56, y + 28), desc, font=small_f, fill=MUTED)
-        strip(renderer.render("working", led_count, **kwargs), y + 12)
-        y += 72
+    for cn, frac, hex_color, note in bars:
+        color = renderer.parse_hex_color(hex_color) or (255, 255, 255)
+        draw.text((52, y - 2), cn, font=label_f, fill=TEXT)
+        bar(color, frac * cap, note)
+        y += 56
 
     draw.text(
-        (56, H - 52),
-        "openrgb-mcp · 灯珠颜色由 renderer.render() 生成 · 实际格数 = 设备灯珠数（示意图 24 格）",
+        (52, H - 34),
+        "openrgb-mcp · 整体控制：颜色 + 亮度由控制器驱动，无逐帧写入，不闪",
         font=small_f,
         fill=MUTED,
     )
 
-    blurred = glow.filter(ImageFilter.GaussianBlur(20)).point(lambda v: v // 2)
+    blurred = glow.filter(ImageFilter.GaussianBlur(18)).point(lambda v: v // 2)
     img = ImageChops.add(sharp, blurred)
     img.save(out)
     print("wrote", out, img.size)

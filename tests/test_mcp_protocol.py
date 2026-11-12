@@ -106,7 +106,9 @@ async def _run(server: mock.MockServer) -> None:
 
             result = await session.call_tool("set_progress", {"percent": 40})
             assert not result.is_error, result.content
-            assert result.structured_content["filled_leds"] == 4, result.structured_content
+            assert result.structured_content["percent"] == 40.0, result.structured_content
+            # in global control the progress is the brightness of the whole strip
+            assert result.structured_content["control"] == "global", result.structured_content
 
             result = await session.call_tool("set_quota", {"remaining": 25, "total": 100})
             assert not result.is_error, result.content
@@ -120,8 +122,13 @@ async def _run(server: mock.MockServer) -> None:
             result = await session.call_tool("set_state", {"state": "nope"})
             assert result.is_error, result.content
 
-            # the mock recorded the colour packets the tools produced
-            assert server.count_of(mock.RGBCONTROLLER_UPDATELEDS) >= 3
+            # the lamp was actually driven: either a hardware effect
+            # (UPDATEMODE) or per-LED colours (UPDATELEDS)
+            driven = (
+                server.count_of(mock.RGBCONTROLLER_UPDATEMODE)
+                + server.count_of(mock.RGBCONTROLLER_UPDATELEDS)
+            )
+            assert driven >= 3, driven
 
 
 def main() -> int:
